@@ -5,8 +5,8 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
-const ffmpegPath = require("ffmpeg-static");
 const { unpackedBinaryPath } = require("./binary-path");
+const ffmpegPath = unpackedBinaryPath(require("ffmpeg-static"));
 const {
   app,
   BrowserWindow,
