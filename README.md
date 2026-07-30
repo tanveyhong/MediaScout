@@ -1,4 +1,4 @@
-# Media Scout 0.3
+# Media Scout 0.4
 
 Media Scout is a Windows desktop MVP that resolves supported public post URLs into complete
 media files. It is intended for media the user owns, public-domain media, or sources whose
@@ -14,6 +14,11 @@ audio/video preview before its link is copied or the file is saved.
 - Batch URL capture, optional clipboard suggestions, quality/codec/file-size preferences,
   and audio-only YouTube downloads.
 - Secure six-digit pairing between the desktop app and browser companion.
+- Persistent pairing with live companion health, repair, and credential reset controls.
+- Restorable download queue with configurable concurrency, extractor bandwidth limits,
+  bulk capture actions, filename templates, and content-fingerprint duplicate warnings.
+- Optional system-tray background mode and launch-with-Windows support.
+- Store-ready browser companion ZIP packaging and automated Electron restart smoke tests.
 - Local diagnostics, sanitized rotating logs, incomplete-download cleanup, and privacy controls.
 - Packaged-build update checks backed by GitHub Releases.
 

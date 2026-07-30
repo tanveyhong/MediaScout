@@ -1,14 +1,17 @@
-name: Verify
+name: Extension package
 
 on:
+  workflow_dispatch:
   push:
-  pull_request:
+    paths:
+      - "browser-extension/**"
+      - "scripts/package-extension.js"
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  package:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -20,8 +23,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm verify
-      - run: pnpm format:check
-      - run: pnpm audit --prod
-      - run: pnpm test:e2e
-      - run: pnpm run pack
+      - run: pnpm pack:extension
+      - uses: actions/upload-artifact@v4
+        with:
+          name: media-scout-companion
+          path: dist/extension-stores/*.zip

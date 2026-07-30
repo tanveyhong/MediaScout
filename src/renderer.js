@@ -5,6 +5,14 @@ const forceRefreshButton = document.querySelector("#forceRefreshButton");
 const resultCount = document.querySelector("#resultCount");
 const emptyState = document.querySelector("#emptyState");
 const resultsList = document.querySelector("#resultsList");
+const selectAllMediaButton = document.querySelector("#selectAllMedia");
+const saveSelectedMediaButton = document.querySelector("#saveSelectedMedia");
+const dismissSelectedMediaButton = document.querySelector(
+  "#dismissSelectedMedia",
+);
+const exportSelectedMediaButton = document.querySelector(
+  "#exportSelectedMedia",
+);
 const resultTemplate = document.querySelector("#resultTemplate");
 const toast = document.querySelector("#toast");
 const videoCountElement = document.querySelector("#videoCount");
@@ -64,13 +72,25 @@ const downloadUpdateButton = document.querySelector("#downloadUpdate");
 const installUpdateButton = document.querySelector("#installUpdate");
 const updateStatusElement = document.querySelector("#updateStatus");
 const clearPrivateDataButton = document.querySelector("#clearPrivateData");
+const connectionStatus = document.querySelector("#connectionStatus");
+const connectionStatusText = document.querySelector("#connectionStatusText");
+const companionHealth = document.querySelector("#companionHealth");
+const resetPairingButton = document.querySelector("#resetPairing");
+const downloadQueueList = document.querySelector("#downloadQueueList");
+const pauseAllDownloadsButton = document.querySelector("#pauseAllDownloads");
 const preferenceInputs = {
   audioOnly: document.querySelector("#audioOnly"),
   clipboardMonitoring: document.querySelector("#clipboardMonitoring"),
+  closeBehavior: document.querySelector("#closeBehavior"),
+  concurrentDownloads: document.querySelector("#concurrentDownloads"),
+  filenameTemplate: document.querySelector("#filenameTemplate"),
   maxHeight: document.querySelector("#maxHeight"),
   maxFileSizeMb: document.querySelector("#maxFileSizeMb"),
   nativeNotifications: document.querySelector("#nativeNotifications"),
+  openAtLogin: document.querySelector("#openAtLogin"),
+  pauseOnBattery: document.querySelector("#pauseOnBattery"),
   preferH264: document.querySelector("#preferH264"),
+  speedLimitKbps: document.querySelector("#speedLimitKbps"),
 };
 
 let count = 0;
@@ -85,7 +105,10 @@ let pendingRightsDownload = null;
 let toastTimer;
 let historyEntries = [];
 let suggestedClipboardUrl = "";
+const clipboardInbox = [];
 let currentPreferences = {};
+let downloadRightsConfirmed = false;
+const capturedMedia = new Map();
 const downloadViews = new Map();
 const progressSamples = new Map();
 
@@ -171,8 +194,10 @@ async function selectView(viewName) {
   workspace.classList.toggle("captures-open", viewName === "captures");
   workspace.classList.toggle("about-open", viewName === "about");
   workspace.classList.toggle("library-open", viewName === "library");
+  workspace.classList.toggle("downloads-open", viewName === "downloads");
   workspace.classList.toggle("diagnostics-open", viewName === "diagnostics");
   if (viewName === "library") await refreshHistory();
+  if (viewName === "downloads") await refreshDownloadQueue();
   if (viewName === "diagnostics") await refreshDiagnostics();
 }
 
@@ -181,6 +206,56 @@ function element(tag, text = "", className = "") {
   node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+
+async function refreshConnectionStatus() {
+  const status = await window.mediaScout.getExtensionStatus();
+  const message = status.connected
+    ? `Companion connected${status.manifestVersion ? ` · v${status.manifestVersion}` : ""}`
+    : status.bridgeOnline
+      ? "Pairing required"
+      : "Companion bridge offline";
+  connectionStatus.classList.toggle("connected", status.connected);
+  connectionStatusText.textContent = message;
+  companionHealth.textContent = status.extensionAvailable
+    ? message
+    : "The packaged companion is missing. Reinstall Media Scout.";
+}
+
+async function refreshDownloadQueue() {
+  const queue = await window.mediaScout.getDownloadQueue();
+  const jobs = [...queue.active, ...queue.queued];
+  downloadQueueList.replaceChildren();
+  if (!jobs.length) {
+    downloadQueueList.append(element("p", "No active or queued downloads."));
+    return;
+  }
+  jobs.forEach((job) => {
+    const card = element("article", "", "history-card");
+    const details = element("div");
+    details.append(
+      element("strong", job.title || new URL(job.url).hostname),
+      element("small", job.state === "active" ? "Downloading" : "Queued"),
+    );
+    card.append(details);
+    if (job.state === "queued") {
+      const actions = element("div", "", "history-actions");
+      for (const direction of ["up", "down"]) {
+        const button = element(
+          "button",
+          direction === "up" ? "Move up" : "Move down",
+          "quiet-button",
+        );
+        button.addEventListener("click", async () => {
+          await window.mediaScout.reorderDownload(job.id, direction);
+          await refreshDownloadQueue();
+        });
+        actions.append(button);
+      }
+      card.append(actions);
+    }
+    downloadQueueList.append(card);
+  });
 }
 
 function renderHistory() {
@@ -346,6 +421,12 @@ function openPreview(media) {
 function createMediaCard(media) {
   const fragment = resultTemplate.content.cloneNode(true);
   const card = fragment.querySelector(".media-card");
+  const selection = document.createElement("input");
+  selection.type = "checkbox";
+  selection.className = "media-selection";
+  selection.setAttribute("aria-label", "Select captured media");
+  card.prepend(selection);
+  card.dataset.mediaUrl = media.url;
   const isAudio = media.mime.startsWith("audio/");
   const type = isAudio ? "Audio" : "Video";
   const previewTile = fragment.querySelector(".preview-tile");
@@ -461,6 +542,13 @@ function createMediaCard(media) {
     previewTile.prepend(videoThumbnail);
   }
   fragment.querySelector(".media-type").textContent = media.extension || type;
+  const pinMedia = element("button", "Pin", "quiet-button media-pin");
+  pinMedia.addEventListener("click", () => {
+    const pinned = card.classList.toggle("pinned");
+    pinMedia.textContent = pinned ? "Unpin" : "Pin";
+    if (pinned) resultsList.prepend(card);
+  });
+  fragment.querySelector(".media-card-top").append(pinMedia);
   fragment.querySelector(".media-time").textContent = new Date(
     media.detectedAt,
   ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -503,6 +591,7 @@ async function loadInitialPage() {
   downloadDirectoryElement.title = config.downloadDirectory;
   updatePinState(config.alwaysOnTop);
   currentPreferences = config.preferences;
+  downloadRightsConfirmed = config.downloadRightsConfirmed;
   for (const [key, input] of Object.entries(preferenceInputs)) {
     if (input.type === "checkbox")
       input.checked = Boolean(config.preferences[key]);
@@ -517,11 +606,28 @@ navButtons.forEach((button) => {
 for (const [key, input] of Object.entries(preferenceInputs)) {
   input.addEventListener("change", async () => {
     const value =
-      input.type === "checkbox" ? input.checked : Number(input.value);
+      input.type === "checkbox"
+        ? input.checked
+        : ["closeBehavior", "filenameTemplate"].includes(key)
+          ? input.value
+          : Number(input.value);
     await window.mediaScout.updatePreferences({ [key]: value });
     showToast("Preference saved.");
   });
 }
+
+resetPairingButton.addEventListener("click", async () => {
+  const result = await window.mediaScout.resetPairing();
+  pairingCodeElement.textContent = result.pairingCode;
+  showToast("Pairing reset. Enter the new code in the companion.");
+  await refreshConnectionStatus();
+});
+
+pauseAllDownloadsButton.addEventListener("click", async () => {
+  const result = await window.mediaScout.pauseAllDownloads();
+  showToast(`Paused ${result.paused} active download(s).`);
+  await refreshDownloadQueue();
+});
 
 batchCaptureButton.addEventListener("click", async () => {
   const urls = batchUrls.value
@@ -570,14 +676,18 @@ window.mediaScout.onUpdateStatus((status) => {
   downloadUpdateButton.hidden = status.state !== "available";
   installUpdateButton.hidden = status.state !== "ready";
 });
+window.mediaScout.onNotice(({ message }) => showToast(message));
 clearPrivateDataButton.addEventListener("click", async () => {
   await window.mediaScout.clearPrivateData();
   resultsList.replaceChildren();
   showToast("Local private data cleared.");
 });
 acceptClipboardButton.addEventListener("click", async () => {
-  if (suggestedClipboardUrl)
+  if (clipboardInbox.length) {
+    await window.mediaScout.batchCapture(clipboardInbox.splice(0));
+  } else if (suggestedClipboardUrl) {
     await window.mediaScout.resolvePage(suggestedClipboardUrl);
+  }
   clipboardSuggestion.hidden = true;
 });
 dismissClipboardButton.addEventListener("click", () => {
@@ -585,7 +695,8 @@ dismissClipboardButton.addEventListener("click", () => {
 });
 window.mediaScout.onClipboardSuggestion(({ url }) => {
   suggestedClipboardUrl = url;
-  clipboardSuggestionText.textContent = `Resolve copied URL: ${new URL(url).hostname}?`;
+  if (!clipboardInbox.includes(url)) clipboardInbox.push(url);
+  clipboardSuggestionText.textContent = `${clipboardInbox.length} supported URL${clipboardInbox.length === 1 ? "" : "s"} waiting in the clipboard inbox`;
   clipboardSuggestion.hidden = false;
 });
 
@@ -748,6 +859,7 @@ confirmRightsButton.addEventListener("click", async () => {
   if (!pendingRightsDownload) return;
   confirmRightsButton.disabled = true;
   await window.mediaScout.confirmDownloadRights();
+  downloadRightsConfirmed = true;
   const pending = pendingRightsDownload;
   pendingRightsDownload = null;
   rightsDialog.close();
@@ -767,6 +879,7 @@ clearButton.addEventListener("click", async () => {
   videoCount = 0;
   audioCount = 0;
   totalKnownSize = 0;
+  capturedMedia.clear();
   downloadViews.clear();
   await window.mediaScout.clearMedia();
   updateCount();
@@ -787,12 +900,64 @@ forceRefreshButton.addEventListener("click", async () => {
 });
 
 window.mediaScout.onDetected((media) => {
+  capturedMedia.set(media.url, media);
   resultsList.prepend(createMediaCard(media));
   count += 1;
   if (media.mime.startsWith("audio/")) audioCount += 1;
   else videoCount += 1;
   totalKnownSize += media.size || 0;
   updateCount();
+});
+
+selectAllMediaButton.addEventListener("click", () => {
+  const checkboxes = [...resultsList.querySelectorAll(".media-selection")];
+  const shouldSelect = checkboxes.some((checkbox) => !checkbox.checked);
+  checkboxes.forEach((checkbox) => {
+    checkbox.checked = shouldSelect;
+  });
+});
+
+saveSelectedMediaButton.addEventListener("click", async () => {
+  const selected = [
+    ...resultsList.querySelectorAll(".media-selection:checked"),
+  ].map((checkbox) =>
+    capturedMedia.get(checkbox.closest(".media-card").dataset.mediaUrl),
+  );
+  if (!selected.length) return showToast("Select at least one captured item.");
+  if (!downloadRightsConfirmed) {
+    showToast("Save one item first to confirm download rights.");
+    return;
+  }
+  for (const media of selected) await requestDownload(media);
+  showToast(`Queued ${selected.length} selected item(s).`);
+});
+
+dismissSelectedMediaButton.addEventListener("click", () => {
+  const selected = [
+    ...resultsList.querySelectorAll(".media-selection:checked"),
+  ];
+  for (const checkbox of selected) {
+    const card = checkbox.closest(".media-card");
+    const media = capturedMedia.get(card.dataset.mediaUrl);
+    capturedMedia.delete(card.dataset.mediaUrl);
+    count -= 1;
+    if (media?.mime.startsWith("audio/")) audioCount -= 1;
+    else videoCount -= 1;
+    totalKnownSize -= media?.size || 0;
+    card.remove();
+  }
+  updateCount();
+});
+
+exportSelectedMediaButton.addEventListener("click", async () => {
+  const selected = [...resultsList.querySelectorAll(".media-selection:checked")]
+    .map((checkbox) =>
+      capturedMedia.get(checkbox.closest(".media-card").dataset.mediaUrl),
+    )
+    .filter(Boolean);
+  if (!selected.length) return showToast("Select media to export.");
+  const result = await window.mediaScout.exportMediaMetadata(selected);
+  if (result.ok) showToast("Capture metadata exported.");
 });
 
 window.mediaScout.onDownloadStarted((download) => {
@@ -851,3 +1016,5 @@ window.mediaScout.onDownloadFinished((download) => {
 
 updateCount();
 loadInitialPage();
+refreshConnectionStatus();
+setInterval(refreshConnectionStatus, 2_000);
