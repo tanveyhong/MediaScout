@@ -84,7 +84,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $assets = Get-ChildItem dist -File |
+          $assets = Get-ChildItem dist -File -Recurse |
             Where-Object {
               $_.Extension -In ".exe", ".blockmap", ".txt", ".zip" -or
               $_.Name -eq "latest.yml"
