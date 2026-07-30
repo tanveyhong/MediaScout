@@ -1,7 +1,5 @@
 "use strict";
 
-const BLOCKED_HOST_SUFFIXES = Object.freeze([]);
-
 const DIRECT_MEDIA_EXTENSIONS = Object.freeze([
   ".mp4",
   ".webm",
@@ -14,7 +12,7 @@ const DIRECT_MEDIA_EXTENSIONS = Object.freeze([
   ".ogg",
   ".oga",
   ".opus",
-  ".flac"
+  ".flac",
 ]);
 
 const MEDIA_MIME_PREFIXES = Object.freeze(["video/", "audio/"]);
@@ -22,22 +20,14 @@ const EXCLUDED_MIME_TYPES = Object.freeze([
   "video/mp2t",
   "application/vnd.apple.mpegurl",
   "application/x-mpegurl",
-  "application/dash+xml"
+  "application/dash+xml",
 ]);
-
-function normalizeHost(hostname) {
-  return String(hostname || "").trim().toLowerCase().replace(/\.$/, "");
-}
-
-function isBlockedHost(hostname) {
-  normalizeHost(hostname);
-  return false;
-}
 
 function parseHttpUrl(value) {
   try {
     const parsed = new URL(value);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      return null;
     return parsed;
   } catch {
     return null;
@@ -46,23 +36,30 @@ function parseHttpUrl(value) {
 
 function extensionFromPath(pathname) {
   const lower = String(pathname || "").toLowerCase();
-  return DIRECT_MEDIA_EXTENSIONS.find((extension) => lower.endsWith(extension)) || "";
+  return (
+    DIRECT_MEDIA_EXTENSIONS.find((extension) => lower.endsWith(extension)) || ""
+  );
 }
 
 function normalizeMime(contentType) {
-  return String(contentType || "").split(";", 1)[0].trim().toLowerCase();
+  return String(contentType || "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
 }
 
 function classifyMedia(url, contentType = "") {
   const parsed = parseHttpUrl(url);
-  if (!parsed) return { allowed: false, reason: "Only HTTP(S) URLs are supported." };
-  if (isBlockedHost(parsed.hostname)) {
-    return { allowed: false, reason: "This provider is excluded by policy." };
-  }
-  if (parsed.searchParams.has("bytestart") || parsed.searchParams.has("byteend")) {
+  if (!parsed)
+    return { allowed: false, reason: "Only HTTP(S) URLs are supported." };
+  if (
+    parsed.searchParams.has("bytestart") ||
+    parsed.searchParams.has("byteend")
+  ) {
     return {
       allowed: false,
-      reason: "This URL is a partial byte-range fragment, not a complete media file."
+      reason:
+        "This URL is a partial byte-range fragment, not a complete media file.",
     };
   }
 
@@ -70,14 +67,20 @@ function classifyMedia(url, contentType = "") {
   if (EXCLUDED_MIME_TYPES.includes(mime)) {
     return {
       allowed: false,
-      reason: "Playlist, segmented, and adaptive-stream formats are not supported."
+      reason:
+        "Playlist, segmented, and adaptive-stream formats are not supported.",
     };
   }
 
   const extension = extensionFromPath(parsed.pathname);
-  const directMime = MEDIA_MIME_PREFIXES.some((prefix) => mime.startsWith(prefix));
+  const directMime = MEDIA_MIME_PREFIXES.some((prefix) =>
+    mime.startsWith(prefix),
+  );
   if (!extension && !directMime) {
-    return { allowed: false, reason: "The response is not a direct media file." };
+    return {
+      allowed: false,
+      reason: "The response is not a direct media file.",
+    };
   }
 
   return {
@@ -85,15 +88,13 @@ function classifyMedia(url, contentType = "") {
     hostname: parsed.hostname,
     extension,
     mime: mime || "unknown",
-    url: parsed.href
+    url: parsed.href,
   };
 }
 
 module.exports = {
-  BLOCKED_HOST_SUFFIXES,
   DIRECT_MEDIA_EXTENSIONS,
   classifyMedia,
-  isBlockedHost,
   normalizeMime,
-  parseHttpUrl
+  parseHttpUrl,
 };

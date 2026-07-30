@@ -74,7 +74,7 @@ function createFixtureServer() {
         "Accept-Ranges": "bytes",
         "Cache-Control": "no-store",
         "Content-Length": wave.length,
-        "Content-Type": "audio/wav"
+        "Content-Type": "audio/wav",
       });
       response.end(wave);
       return;
@@ -85,7 +85,7 @@ function createFixtureServer() {
       response.writeHead(200, {
         "Cache-Control": "no-store",
         "Content-Length": body.length,
-        "Content-Type": "text/html; charset=utf-8"
+        "Content-Type": "text/html; charset=utf-8",
       });
       response.end(body);
       return;

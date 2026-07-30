@@ -1,15 +1,23 @@
 {
   "manifest_version": 3,
   "name": "Media Scout Companion",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "Resolve supported public Instagram, YouTube, Bilibili, and Douyin videos through Media Scout.",
-  "permissions": [
-    "storage",
-    "tabs",
-    "webRequest"
-  ],
+  "permissions": ["storage", "tabs", "webRequest"],
   "host_permissions": [
-    "<all_urls>",
+    "https://*.instagram.com/*",
+    "https://*.youtube.com/*",
+    "https://youtu.be/*",
+    "https://*.bilibili.com/*",
+    "https://*.douyin.com/*",
+    "https://*.douyinvod.com/*",
+    "https://*.bytecdn.cn/*",
+    "https://*.bytefcdn.com/*",
+    "https://*.amemv.com/*",
+    "https://*.snssdk.com/*",
+    "https://*.pstatp.com/*",
+    "https://*.volccdn.com/*",
+    "https://*.zjcdn.com/*",
     "http://127.0.0.1:48731/*"
   ],
   "background": {
@@ -18,11 +26,13 @@
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "https://*.instagram.com/*",
+        "https://*.youtube.com/*",
+        "https://youtu.be/*",
+        "https://*.bilibili.com/*",
+        "https://*.douyin.com/*"
       ],
-      "js": [
-        "content-script.js"
-      ],
+      "js": ["content-script.js"],
       "run_at": "document_start"
     }
   ],

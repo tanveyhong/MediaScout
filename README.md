@@ -11,7 +11,8 @@ audio/video preview before its link is copied or the file is saved.
 
 - Public YouTube watch, Shorts, and `youtu.be` URLs are supported without bypassing access controls.
 - Adaptive playlists and segmented streaming formats such as HLS and DASH are excluded.
-- The app does not bypass DRM, encryption, authentication, paywalls, or access controls.
+- The app is designed for public URLs and does not intentionally bypass DRM, encryption,
+  authentication, paywalls, or access controls.
 - Every download requires a rights confirmation.
 
 ## Development

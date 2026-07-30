@@ -1,24 +1,67 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Media Scout Companion</title>
     <style>
-      :root { color-scheme: dark; font-family: "Segoe UI", sans-serif; }
-      body { width: 260px; margin: 0; padding: 18px; color: #fff7f6; background: #211b20; }
-      header { display: flex; align-items: center; gap: 10px; font-weight: 650; }
-      .mark { width: 32px; height: 32px; object-fit: contain; }
-      .status { display: flex; align-items: center; gap: 8px; margin: 18px 0 10px; padding: 12px;
-        border: 1px solid #49383f; border-radius: 8px; background: #30262c; }
-      .dot { width: 8px; height: 8px; border-radius: 50%; background: #777; }
-      .online .dot { background: #ef7f8a; box-shadow: 0 0 10px #ef7f8a; }
-      p { margin: 0; color: #bea9ad; font-size: 12px; line-height: 1.5; }
+      :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", sans-serif;
+      }
+      body {
+        width: 260px;
+        margin: 0;
+        padding: 18px;
+        color: #fff7f6;
+        background: #211b20;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 650;
+      }
+      .mark {
+        width: 32px;
+        height: 32px;
+        object-fit: contain;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 18px 0 10px;
+        padding: 12px;
+        border: 1px solid #49383f;
+        border-radius: 8px;
+        background: #30262c;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #777;
+      }
+      .online .dot {
+        background: #ef7f8a;
+        box-shadow: 0 0 10px #ef7f8a;
+      }
+      p {
+        margin: 0;
+        color: #bea9ad;
+        font-size: 12px;
+        line-height: 1.5;
+      }
     </style>
   </head>
   <body>
-    <header><img class="mark" src="icons/icon48.png" alt="">Media Scout Companion</header>
-    <div id="status" class="status"><span class="dot"></span><span id="statusText">Checking…</span></div>
+    <header>
+      <img class="mark" src="icons/icon48.png" alt="" />Media Scout Companion
+    </header>
+    <div id="status" class="status">
+      <span class="dot"></span><span id="statusText">Checking…</span>
+    </div>
     <p>Keep Media Scout open, then play a supported public video.</p>
     <script src="popup.js"></script>
   </body>

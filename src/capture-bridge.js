@@ -5,11 +5,14 @@ const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { Readable } = require("node:stream");
 const ffmpegPath = require("ffmpeg-static");
-const { isBlockedHost, parseHttpUrl } = require("./policy");
+const { parseHttpUrl } = require("./policy");
 const { resolvePublicPage } = require("./page-resolver");
 
 const DEFAULT_BRIDGE_PORT = 48_731;
-const ALLOWED_EXTENSION_ORIGINS = /^(chrome-extension|moz-extension):\/\/[a-z0-9-]+$/i;
+const ALLOWED_EXTENSION_ORIGINS =
+  /^(chrome-extension|moz-extension):\/\/[a-z0-9-]+$/i;
+const PROXY_TTL_MS = 30 * 60 * 1000;
+const MAX_MEDIA_PROXIES = 200;
 
 function isAllowedOrigin(origin) {
   return ALLOWED_EXTENSION_ORIGINS.test(String(origin || ""));
@@ -25,9 +28,9 @@ function probeMedia(url, pageUrl) {
         "-headers",
         `Referer: ${pageUrl}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n`,
         "-i",
-        url
+        url,
       ],
-      { windowsHide: true }
+      { windowsHide: true },
     );
     const timeout = setTimeout(() => child.kill(), 12_000);
     child.stderr.on("data", (chunk) => {
@@ -49,7 +52,7 @@ function probeMedia(url, pageUrl) {
         height: Number(dimensions?.[2]) || 0,
         url,
         videoCodec: video?.[1]?.toLowerCase() || "",
-        width: Number(dimensions?.[1]) || 0
+        width: Number(dimensions?.[1]) || 0,
       });
     });
   });
@@ -58,7 +61,7 @@ function probeMedia(url, pageUrl) {
 function json(response, status, body, origin = "") {
   const headers = {
     "Cache-Control": "no-store",
-    "Content-Type": "application/json; charset=utf-8"
+    "Content-Type": "application/json; charset=utf-8",
   };
   if (isAllowedOrigin(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
@@ -68,18 +71,42 @@ function json(response, status, body, origin = "") {
   response.end(JSON.stringify(body));
 }
 
-function startCaptureBridge(onCapture, port = DEFAULT_BRIDGE_PORT, getResolverOptions = () => ({})) {
+function startCaptureBridge(
+  onCapture,
+  port = DEFAULT_BRIDGE_PORT,
+  getResolverOptions = () => ({}),
+  bridgeOptions = {},
+) {
   const commands = [];
   const mediaProxies = new Map();
+  const sockets = new Set();
+  const proxyTtlMs = bridgeOptions.proxyTtlMs || PROXY_TTL_MS;
+  let pairedOrigin = "";
+  const extensionAuthorized = (origin) => {
+    if (!isAllowedOrigin(origin)) return false;
+    if (!pairedOrigin) pairedOrigin = origin;
+    return origin === pairedOrigin;
+  };
+  const pruneMediaProxies = () => {
+    const cutoff = Date.now() - proxyTtlMs;
+    for (const [token, proxy] of mediaProxies) {
+      if (proxy.createdAt < cutoff) mediaProxies.delete(token);
+    }
+    while (mediaProxies.size > MAX_MEDIA_PROXIES) {
+      mediaProxies.delete(mediaProxies.keys().next().value);
+    }
+  };
   const server = http.createServer((request, response) => {
     const origin = request.headers.origin || "";
+    pruneMediaProxies();
     const proxyMatch = request.url?.match(
-      /^\/media\/([a-f0-9-]+)\/(?:video\.mp4|audio\.m4a)$/i
+      /^\/media\/([a-f0-9-]+)\/(?:video\.mp4|audio\.m4a)$/i,
     );
 
     if ((request.method === "GET" || request.method === "HEAD") && proxyMatch) {
       const proxy = mediaProxies.get(proxyMatch[1]);
-      if (!proxy) {
+      if (!proxy || proxy.createdAt < Date.now() - proxyTtlMs) {
+        if (proxy) mediaProxies.delete(proxyMatch[1]);
         json(response, 404, { ok: false, message: "Media link expired." });
         return;
       }
@@ -87,7 +114,7 @@ function startCaptureBridge(onCapture, port = DEFAULT_BRIDGE_PORT, getResolverOp
         Referer: proxy.pageUrl,
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-          "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+          "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
       };
       if (request.headers.range) headers.Range = request.headers.range;
       const controller = new AbortController();
@@ -98,46 +125,54 @@ function startCaptureBridge(onCapture, port = DEFAULT_BRIDGE_PORT, getResolverOp
       fetch(proxy.url, {
         headers,
         method: request.method,
-        signal: controller.signal
-      }).then((upstream) => {
-        const forwarded = {};
-        for (const name of [
-          "accept-ranges",
-          "content-length",
-          "content-range",
-          "content-type",
-          "etag",
-          "last-modified"
-        ]) {
-          const value = upstream.headers.get(name);
-          if (value) forwarded[name] = value;
-        }
-        response.writeHead(upstream.status, forwarded);
-        if (request.method === "HEAD" || !upstream.body) {
-          response.end();
-          return;
-        }
-        const stream = Readable.fromWeb(upstream.body);
-        stream.on("error", (error) => {
-          if (error?.name !== "AbortError" && !response.destroyed) {
-            response.destroy(error);
+        signal: controller.signal,
+      })
+        .then((upstream) => {
+          const forwarded = {};
+          for (const name of [
+            "accept-ranges",
+            "content-length",
+            "content-range",
+            "content-type",
+            "etag",
+            "last-modified",
+          ]) {
+            const value = upstream.headers.get(name);
+            if (value) forwarded[name] = value;
+          }
+          response.writeHead(upstream.status, forwarded);
+          if (request.method === "HEAD" || !upstream.body) {
+            response.end();
+            return;
+          }
+          const stream = Readable.fromWeb(upstream.body);
+          stream.on("error", (error) => {
+            if (error?.name !== "AbortError" && !response.destroyed) {
+              response.destroy(error);
+            }
+          });
+          response.on("error", () => stream.destroy());
+          stream.pipe(response);
+        })
+        .catch(() => {
+          if (!response.headersSent) {
+            json(response, 502, {
+              ok: false,
+              message: "Unable to stream resolved media.",
+            });
+          } else {
+            response.destroy();
           }
         });
-        response.on("error", () => stream.destroy());
-        stream.pipe(response);
-      }).catch(() => {
-        if (!response.headersSent) {
-          json(response, 502, { ok: false, message: "Unable to stream resolved media." });
-        } else {
-          response.destroy();
-        }
-      });
       return;
     }
 
     if (request.method === "OPTIONS") {
-      if (!isAllowedOrigin(origin)) {
-        json(response, 403, { ok: false, message: "Extension origin required." });
+      if (!extensionAuthorized(origin)) {
+        json(response, 403, {
+          ok: false,
+          message: "Extension origin required.",
+        });
         return;
       }
       response.writeHead(204, {
@@ -145,47 +180,71 @@ function startCaptureBridge(onCapture, port = DEFAULT_BRIDGE_PORT, getResolverOp
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Max-Age": "600",
-        Vary: "Origin"
+        Vary: "Origin",
       });
       response.end();
       return;
     }
 
     if (request.method === "GET" && request.url === "/status") {
-      json(response, 200, { ok: true, service: "Media Scout capture bridge" }, origin);
+      json(
+        response,
+        200,
+        { ok: true, service: "Media Scout capture bridge" },
+        origin,
+      );
       return;
     }
 
     if (request.method === "GET" && request.url === "/commands") {
-      if (!isAllowedOrigin(origin)) {
-        json(response, 403, { ok: false, message: "Extension origin required." });
+      if (!extensionAuthorized(origin)) {
+        json(response, 403, {
+          ok: false,
+          message: "Extension origin required.",
+        });
         return;
       }
-      json(response, 200, { commands: commands.splice(0, commands.length), ok: true }, origin);
+      json(
+        response,
+        200,
+        { commands: commands.splice(0, commands.length), ok: true },
+        origin,
+      );
       return;
     }
 
-    if (
-      request.method !== "POST" ||
-      request.url !== "/resolve"
-    ) {
+    if (request.method !== "POST" || request.url !== "/resolve") {
       json(response, 404, { ok: false, message: "Not found." }, origin);
       return;
     }
 
-    if (!isAllowedOrigin(origin)) {
+    if (!extensionAuthorized(origin)) {
       json(response, 403, { ok: false, message: "Extension origin required." });
       return;
     }
 
     let raw = "";
+    let tooLarge = false;
     request.setEncoding("utf8");
     request.on("data", (chunk) => {
+      if (tooLarge) return;
       raw += chunk;
-      if (raw.length > 32_768) request.destroy();
+      if (raw.length > 32_768) {
+        raw = "";
+        tooLarge = true;
+      }
     });
     request.on("end", async () => {
       try {
+        if (tooLarge) {
+          json(
+            response,
+            413,
+            { ok: false, message: "Capture payload is too large." },
+            origin,
+          );
+          return;
+        }
         const payload = JSON.parse(raw);
         const page = parseHttpUrl(payload.pageUrl);
         const mediaHint = parseHttpUrl(payload.mediaUrl);
@@ -197,31 +256,27 @@ function startCaptureBridge(onCapture, port = DEFAULT_BRIDGE_PORT, getResolverOp
         const usableDouyinHint =
           isDouyinPage &&
           mediaHint &&
-          !isBlockedHost(mediaHint.hostname) &&
           !["blob:", "data:"].includes(mediaHint.protocol);
         let selectedDouyinMedia = null;
         if (usableDouyinHint) {
           const candidates = [
             mediaHint.href,
-            ...(Array.isArray(payload.mediaCandidates) ? payload.mediaCandidates : [])
+            ...(Array.isArray(payload.mediaCandidates)
+              ? payload.mediaCandidates
+              : []),
           ]
             .map((url) => parseHttpUrl(url))
-            .filter(
-              (url) =>
-                url &&
-                !isBlockedHost(url.hostname) &&
-                !["blob:", "data:"].includes(url.protocol)
-            )
+            .filter((url) => url && !["blob:", "data:"].includes(url.protocol))
             .map((url) => url.href)
             .filter((url, index, all) => index === all.indexOf(url))
             .slice(0, 16);
           const probes = await Promise.all(
-            candidates.map((url) => probeMedia(url, page.href))
+            candidates.map((url) => probeMedia(url, page.href)),
           );
           selectedDouyinMedia =
             probes.find(
               (probe) =>
-                /^(?:h264|avc)/i.test(probe.videoCodec) && probe.audioCodec
+                /^(?:h264|avc)/i.test(probe.videoCodec) && probe.audioCodec,
             ) ||
             probes.find((probe) => probe.videoCodec && probe.audioCodec) ||
             probes.find((probe) => /^(?:h264|avc)/i.test(probe.videoCodec)) ||
@@ -244,15 +299,17 @@ function startCaptureBridge(onCapture, port = DEFAULT_BRIDGE_PORT, getResolverOp
             : await getResolverOptions(payload.pageUrl);
           resolved = usableDouyinHint
             ? {
-              analysis: selectedDouyinMedia,
-              candidates: selectedDouyinMedia ? [selectedDouyinMedia.url] : [],
-              ok: Boolean(selectedDouyinMedia),
-              pageUrl: page.href,
-              thumbnail: String(payload.thumbnail || ""),
-              title: String(payload.title || ""),
-              reason: selectedDouyinMedia
-                ? ""
-                : "Douyin exposed audio-only or unreadable media."
+                analysis: selectedDouyinMedia,
+                candidates: selectedDouyinMedia
+                  ? [selectedDouyinMedia.url]
+                  : [],
+                ok: Boolean(selectedDouyinMedia),
+                pageUrl: page.href,
+                thumbnail: String(payload.thumbnail || ""),
+                title: String(payload.title || ""),
+                reason: selectedDouyinMedia
+                  ? ""
+                  : "Douyin exposed audio-only or unreadable media.",
               }
             : await resolvePublicPage(payload.pageUrl, resolverOptions);
         } finally {
@@ -279,21 +336,25 @@ function startCaptureBridge(onCapture, port = DEFAULT_BRIDGE_PORT, getResolverOp
               : [{ label: "Best available", size: 0, url: parsed.href }];
             deliveredVariants = sourceVariants.map((variant) => {
               const token = crypto.randomUUID();
-              mediaProxies.set(token, { pageUrl: resolved.pageUrl, url: variant.url });
+              mediaProxies.set(token, {
+                createdAt: Date.now(),
+                pageUrl: resolved.pageUrl,
+                url: variant.url,
+              });
               return {
                 ...variant,
-                url: `http://127.0.0.1:${server.address().port}/media/${token}/video.mp4`
+                url: `http://127.0.0.1:${server.address().port}/media/${token}/video.mp4`,
               };
             });
             deliveredUrl = deliveredVariants[0]?.url || deliveredUrl;
             if (resolved.analysis?.audioSourceUrl) {
               const audioToken = crypto.randomUUID();
               mediaProxies.set(audioToken, {
+                createdAt: Date.now(),
                 pageUrl: resolved.pageUrl,
-                url: resolved.analysis.audioSourceUrl
+                url: resolved.analysis.audioSourceUrl,
               });
-              resolved.analysis.audioUrl =
-                `http://127.0.0.1:${server.address().port}/media/${audioToken}/audio.m4a`;
+              resolved.analysis.audioUrl = `http://127.0.0.1:${server.address().port}/media/${audioToken}/audio.m4a`;
               delete resolved.analysis.audioSourceUrl;
             }
           }
@@ -311,15 +372,36 @@ function startCaptureBridge(onCapture, port = DEFAULT_BRIDGE_PORT, getResolverOp
             thumbnail: resolved.thumbnail || "",
             title: resolved.title || "",
             variants: deliveredVariants,
-            url: deliveredUrl
+            url: deliveredUrl,
           });
         }
-        json(response, 202, { count: resolved.candidates.length, ok: true }, origin);
+        json(
+          response,
+          202,
+          { count: resolved.candidates.length, ok: true },
+          origin,
+        );
       } catch {
-        json(response, 400, { ok: false, message: "Invalid capture payload." }, origin);
+        json(
+          response,
+          400,
+          { ok: false, message: "Invalid capture payload." },
+          origin,
+        );
       }
     });
   });
+
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+
+  server.shutdown = () => {
+    server.close();
+    for (const socket of sockets) socket.destroy();
+    sockets.clear();
+  };
 
   server.enqueueCommand = (command) => {
     commands.push(command);
@@ -333,5 +415,5 @@ module.exports = {
   ALLOWED_EXTENSION_ORIGINS,
   DEFAULT_BRIDGE_PORT,
   isAllowedOrigin,
-  startCaptureBridge
+  startCaptureBridge,
 };

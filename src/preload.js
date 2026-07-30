@@ -12,7 +12,8 @@ contextBridge.exposeInMainWorld("mediaScout", {
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),
-  confirmDownloadRights: () => ipcRenderer.invoke("settings:confirm-download-rights"),
+  confirmDownloadRights: () =>
+    ipcRenderer.invoke("settings:confirm-download-rights"),
   validateNavigation: (url) => ipcRenderer.invoke("navigation:validate", url),
   resolvePage: (url) => ipcRenderer.invoke("page:resolve", url),
   copyMedia: (url) => ipcRenderer.invoke("media:copy", url),
@@ -23,7 +24,8 @@ contextBridge.exposeInMainWorld("mediaScout", {
   openInBrowser: (url) => ipcRenderer.invoke("media:open-browser", url),
   clearMedia: () => ipcRenderer.invoke("media:clear"),
   showFile: (filePath) => ipcRenderer.invoke("file:show", filePath),
-  onDetected: (callback) => ipcRenderer.on("media:detected", (_event, data) => callback(data)),
+  onDetected: (callback) =>
+    ipcRenderer.on("media:detected", (_event, data) => callback(data)),
   onDownloadStarted: (callback) =>
     ipcRenderer.on("download:started", (_event, data) => callback(data)),
   onDownloadFinished: (callback) =>

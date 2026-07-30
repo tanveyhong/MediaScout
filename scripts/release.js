@@ -12,15 +12,15 @@ if (process.env.MEDIA_SCOUT_RELEASE_CONFIRMED !== "yes") {
       "First run `pnpm verify` and `pnpm test:local`.",
       "After manually confirming detection, preview, copy, and save, run:",
       "$env:MEDIA_SCOUT_RELEASE_CONFIRMED='yes'; pnpm release",
-      ""
-    ].join("\n")
+      "",
+    ].join("\n"),
   );
   process.exit(1);
 }
 
 const verification = spawnSync(process.execPath, ["scripts/verify.js"], {
   cwd: projectRoot,
-  stdio: "inherit"
+  stdio: "inherit",
 });
 if (verification.status !== 0) process.exit(verification.status || 1);
 
@@ -28,11 +28,11 @@ const builder = path.join(
   projectRoot,
   "node_modules",
   ".bin",
-  process.platform === "win32" ? "electron-builder.cmd" : "electron-builder"
+  process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",
 );
 const release = spawnSync(builder, ["--win", "nsis", "--publish", "never"], {
   cwd: projectRoot,
   shell: process.platform === "win32",
-  stdio: "inherit"
+  stdio: "inherit",
 });
 process.exit(release.status || 0);

@@ -6,7 +6,7 @@ function unpackedBinaryPath(value) {
   const asarSegment = `${path.sep}app.asar${path.sep}`;
   return String(value).replace(
     asarSegment,
-    `${path.sep}app.asar.unpacked${path.sep}`
+    `${path.sep}app.asar.unpacked${path.sep}`,
   );
 }
 

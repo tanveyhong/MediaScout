@@ -2,7 +2,10 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createFixtureServer, createWaveBuffer } = require("../scripts/local-fixture");
+const {
+  createFixtureServer,
+  createWaveBuffer,
+} = require("../scripts/local-fixture");
 
 test("creates a valid PCM WAV fixture", () => {
   const wave = createWaveBuffer(1);
