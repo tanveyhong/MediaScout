@@ -2,7 +2,6 @@
 
 const RESOLVE_URL = "http://127.0.0.1:48731/resolve";
 const COMMANDS_URL = "http://127.0.0.1:48731/commands";
-const BLOCKED_HOSTS = [];
 const sentKeys = new Map();
 const recentMediaByTab = new Map();
 const pendingShareTabs = new Map();
@@ -17,7 +16,7 @@ function decodedUrl(url) {
 
 function looksLikeAudioOnly(url) {
   return /(?:mime_type=audio|audio[_-](?:mp4|track)|\/audio\/|\.m4a(?:$|[?#])|\.mp3(?:$|[?#]))/i.test(
-    decodedUrl(url)
+    decodedUrl(url),
   );
 }
 
@@ -36,16 +35,17 @@ function recentMediaCandidates(tabId, fallback = "") {
   const now = Date.now();
   const candidates = [
     ...(recentMediaByTab.get(tabId) || []),
-    ...(fallback ? [{ capturedAt: now, url: fallback }] : [])
+    ...(fallback ? [{ capturedAt: now, url: fallback }] : []),
   ].filter(
     (entry) =>
-      now - entry.capturedAt < 90_000 &&
-      !looksLikeAudioOnly(entry.url)
+      now - entry.capturedAt < 90_000 && !looksLikeAudioOnly(entry.url),
   );
   return candidates
     .sort((left, right) => {
-      const leftScore = mediaCodecScore(left.url) - (now - left.capturedAt) / 4_000;
-      const rightScore = mediaCodecScore(right.url) - (now - right.capturedAt) / 4_000;
+      const leftScore =
+        mediaCodecScore(left.url) - (now - left.capturedAt) / 4_000;
+      const rightScore =
+        mediaCodecScore(right.url) - (now - right.capturedAt) / 4_000;
       return rightScore - leftScore;
     })
     .map((entry) => entry.url)
@@ -55,23 +55,6 @@ function recentMediaCandidates(tabId, fallback = "") {
 
 function preferredMediaUrl(tabId, fallback = "") {
   return recentMediaCandidates(tabId, fallback)[0] || fallback;
-}
-
-function looksLikeDouyinMedia(url, requestType = "") {
-  try {
-    const parsed = new URL(url);
-    if (looksLikeAudioOnly(url)) return false;
-    const mediaHost =
-      /(?:douyinvod|bytecdn|bytefcdn|amemv|snssdk|pstatp|volccdn|zjcdn)\./i.test(
-        parsed.hostname
-      );
-    return mediaHost && (
-      requestType === "media" ||
-      /(?:\.mp4(?:$|[?#])|video_id=|mime_type=video|tos-cn|playwm|play\/)/i.test(url)
-    );
-  } catch {
-    return false;
-  }
 }
 
 function looksLikeDouyinPageUrl(url) {
@@ -88,16 +71,15 @@ function looksLikeDouyinAsset(url, requestType = "", contextUrl = "") {
     const fromDouyin = looksLikeDouyinPageUrl(contextUrl);
     const mediaHost =
       /(?:douyin|byte|amemv|snssdk|pstatp|volc|zjcdn|ibytedtos)/i.test(
-        parsed.hostname
+        parsed.hostname,
       );
     return (
       (fromDouyin && requestType === "media") ||
-      (mediaHost && (
-        requestType === "media" ||
-        /(?:\.mp4(?:$|[?#])|mime_type=(?:video|audio)|video_id=|audio_id=|tos|playwm|play\/)/i.test(
-        decodedUrl(url)
-      )
-      ))
+      (mediaHost &&
+        (requestType === "media" ||
+          /(?:\.mp4(?:$|[?#])|mime_type=(?:video|audio)|video_id=|audio_id=|tos|playwm|play\/)/i.test(
+            decodedUrl(url),
+          )))
     );
   } catch {
     return false;
@@ -111,9 +93,10 @@ chrome.webRequest.onBeforeRequest.addListener(
       !looksLikeDouyinAsset(
         details.url,
         details.type,
-        details.initiator || details.documentUrl || details.originUrl || ""
+        details.initiator || details.documentUrl || details.originUrl || "",
       )
-    ) return;
+    )
+      return;
     const entries = recentMediaByTab.get(details.tabId) || [];
     entries.unshift({ capturedAt: Date.now(), url: details.url });
     recentMediaByTab.set(
@@ -121,18 +104,26 @@ chrome.webRequest.onBeforeRequest.addListener(
       entries
         .filter(
           (entry, index, all) =>
-            index === all.findIndex((candidate) => candidate.url === entry.url)
+            index === all.findIndex((candidate) => candidate.url === entry.url),
         )
-        .slice(0, 24)
+        .slice(0, 24),
     );
   },
-  { urls: ["<all_urls>"], types: ["media", "xmlhttprequest", "other"] }
+  {
+    urls: [
+      "https://*.douyin.com/*",
+      "https://*.douyinvod.com/*",
+      "https://*.bytecdn.cn/*",
+      "https://*.bytefcdn.com/*",
+      "https://*.amemv.com/*",
+      "https://*.snssdk.com/*",
+      "https://*.pstatp.com/*",
+      "https://*.volccdn.com/*",
+      "https://*.zjcdn.com/*",
+    ],
+    types: ["media", "xmlhttprequest", "other"],
+  },
 );
-
-function blocked(hostname) {
-  const host = String(hostname || "").toLowerCase();
-  return BLOCKED_HOSTS.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
-}
 
 function pageKey(url, mediaUrl = "") {
   try {
@@ -156,8 +147,8 @@ function supportedPage(url) {
         /^\/video\/BV[A-Za-z0-9]+\/?$/i.test(parsed.pathname)) ||
       (["douyin.com", "www.douyin.com"].includes(host) &&
         /^\/video\/\d+\/?$/.test(parsed.pathname)) ||
-      (host === "v.douyin.com" && /^\/[A-Za-z0-9_-]+\/?$/.test(parsed.pathname))
-      ||
+      (host === "v.douyin.com" &&
+        /^\/[A-Za-z0-9_-]+\/?$/.test(parsed.pathname)) ||
       (["youtube.com", "www.youtube.com", "m.youtube.com"].includes(host) &&
         ((parsed.pathname === "/watch" &&
           /^[A-Za-z0-9_-]{11}$/.test(parsed.searchParams.get("v") || "")) ||
@@ -174,7 +165,6 @@ function browserSafe(url) {
     const parsed = new URL(url);
     return (
       ["http:", "https:"].includes(parsed.protocol) &&
-      !blocked(parsed.hostname) &&
       !parsed.searchParams.has("bytestart") &&
       !parsed.searchParams.has("byteend")
     );
@@ -198,15 +188,17 @@ async function resolvePage(pageUrl, media = {}) {
         mediaUrl: media.mediaUrl || "",
         mediaCandidates:
           media.mediaCandidates ||
-          (recentMediaByTab.get(media.tabId) || []).map((entry) => entry.url).slice(0, 16),
+          (recentMediaByTab.get(media.tabId) || [])
+            .map((entry) => entry.url)
+            .slice(0, 16),
         pageUrl,
         thumbnail: media.thumbnail || "",
-        title: media.title || ""
-      })
+        title: media.title || "",
+      }),
     });
     await chrome.storage.local.set({
       bridgeOnline: response.ok,
-      lastCaptureAt: response.ok ? Date.now() : 0
+      lastCaptureAt: response.ok ? Date.now() : 0,
     });
     if (!response.ok) sentKeys.delete(key);
     return response.ok;
@@ -224,11 +216,14 @@ chrome.runtime.onMessage.addListener((message, sender) => {
     .map((entry) => entry.url)
     .slice(0, 16);
   (async () => {
-    const resolved = await resolvePage(sender.tab?.url || message.pageUrl || "", {
-      ...message,
-      mediaCandidates: allCandidates,
-      mediaUrl: networkMedia
-    });
+    const resolved = await resolvePage(
+      sender.tab?.url || message.pageUrl || "",
+      {
+        ...message,
+        mediaCandidates: allCandidates,
+        mediaUrl: networkMedia,
+      },
+    );
     if (resolved && pendingShareTabs.has(sender.tab?.id)) {
       await finishPendingShareTab(sender.tab.id);
     }
@@ -241,7 +236,9 @@ async function finishPendingShareTab(tabId) {
   pendingShareTabs.delete(tabId);
   await chrome.tabs.remove(tabId).catch(() => {});
   if (pending.returnTabId) {
-    await chrome.tabs.update(pending.returnTabId, { active: true }).catch(() => {});
+    await chrome.tabs
+      .update(pending.returnTabId, { active: true })
+      .catch(() => {});
   }
 }
 
@@ -261,8 +258,9 @@ async function tryPendingShareTab(tabId) {
     .sendMessage(tabId, { autoplay: true, type: "capture-now" })
     .catch(() => ({}));
   await new Promise((resolve) => setTimeout(resolve, 900));
-  const payload =
-    await chrome.tabs.sendMessage(tabId, { type: "capture-now" }).catch(() => ({}));
+  const payload = await chrome.tabs
+    .sendMessage(tabId, { type: "capture-now" })
+    .catch(() => ({}));
   const networkMedia = preferredMediaUrl(tabId, payload?.mediaUrl);
   const allCandidates = (recentMediaByTab.get(tabId) || [])
     .map((entry) => entry.url)
@@ -271,7 +269,7 @@ async function tryPendingShareTab(tabId) {
     const resolved = await resolvePage(tab.url || payload?.pageUrl || "", {
       ...payload,
       mediaCandidates: allCandidates,
-      mediaUrl: networkMedia
+      mediaUrl: networkMedia,
     });
     if (resolved) {
       await finishPendingShareTab(tabId);
@@ -286,8 +284,9 @@ async function captureSupportedTab(tabId, tabUrl = "") {
     ? { id: tabId, url: tabUrl }
     : await chrome.tabs.get(tabId).catch(() => null);
   if (!tab?.id || !supportedPage(tab.url || "")) return;
-  const payload =
-    await chrome.tabs.sendMessage(tab.id, { type: "capture-now" }).catch(() => ({}));
+  const payload = await chrome.tabs
+    .sendMessage(tab.id, { type: "capture-now" })
+    .catch(() => ({}));
   const networkMedia = preferredMediaUrl(tab.id, payload?.mediaUrl);
   const allCandidates = (recentMediaByTab.get(tab.id) || [])
     .map((entry) => entry.url)
@@ -296,7 +295,7 @@ async function captureSupportedTab(tabId, tabUrl = "") {
     ...payload,
     mediaCandidates: allCandidates,
     mediaUrl: networkMedia,
-    tabId: tab.id
+    tabId: tab.id,
   });
 }
 
@@ -329,10 +328,14 @@ async function pollCommands() {
         if (command.type === "open-media" && browserSafe(command.url)) {
           await chrome.tabs.create({ active: true, url: command.url });
         } else if (command.type === "capture-active") {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const [tab] = await chrome.tabs.query({
+            active: true,
+            currentWindow: true,
+          });
           if (tab?.id) {
-            const payload =
-              await chrome.tabs.sendMessage(tab.id, { type: "capture-now" }).catch(() => ({}));
+            const payload = await chrome.tabs
+              .sendMessage(tab.id, { type: "capture-now" })
+              .catch(() => ({}));
             const networkMedia = preferredMediaUrl(tab.id, payload?.mediaUrl);
             const allCandidates = (recentMediaByTab.get(tab.id) || [])
               .map((entry) => entry.url)
@@ -340,7 +343,7 @@ async function pollCommands() {
             await resolvePage(tab.url || payload?.pageUrl || "", {
               ...payload,
               mediaCandidates: allCandidates,
-              mediaUrl: networkMedia
+              mediaUrl: networkMedia,
             });
           }
         } else if (
@@ -350,13 +353,16 @@ async function pollCommands() {
         ) {
           const [returnTab] = await chrome.tabs.query({
             active: true,
-            currentWindow: true
+            currentWindow: true,
           });
-          const tab = await chrome.tabs.create({ active: true, url: command.url });
+          const tab = await chrome.tabs.create({
+            active: true,
+            url: command.url,
+          });
           if (tab?.id) {
             pendingShareTabs.set(tab.id, {
               returnTabId: returnTab?.id,
-              startedAt: Date.now()
+              startedAt: Date.now(),
             });
           }
         }

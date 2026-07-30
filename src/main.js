@@ -14,18 +14,15 @@ const {
   dialog,
   ipcMain,
   session,
-  shell
+  shell,
 } = require("electron");
-const { isBlockedHost, parseHttpUrl } = require("./policy");
+const { parseHttpUrl } = require("./policy");
 const { resolvePublicPage } = require("./page-resolver");
 const {
   createAnonymousDouyinSession,
-  isDouyinVideoUrl
+  isDouyinVideoUrl,
 } = require("./douyin-session");
-const {
-  DEFAULT_BRIDGE_PORT,
-  startCaptureBridge
-} = require("./capture-bridge");
+const { DEFAULT_BRIDGE_PORT, startCaptureBridge } = require("./capture-bridge");
 
 const MEDIA_PARTITION = "persist:media-scout";
 const DEFAULT_START_URL = "https://archive.org/";
@@ -33,10 +30,11 @@ let mainWindow;
 let captureBridge;
 let captureBridgeRetryTimer;
 let appClosing = false;
-let lastPageHost = "";
 let downloadDirectory = "";
 let alwaysOnTop = false;
 let downloadRightsConfirmed = false;
+const completedDownloadPaths = new Set();
+const activeChildren = new Set();
 const detectedUrls = new Set();
 const detectedKeys = new Set();
 const previewConversions = new Map();
@@ -45,8 +43,8 @@ const ytDlpPath = unpackedBinaryPath(
     path.dirname(require.resolve("@distube/yt-dlp")),
     "..",
     "bin",
-    process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp"
-  )
+    process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp",
+  ),
 );
 
 app.setAppUserModelId("com.independent.mediascout");
@@ -66,7 +64,6 @@ function loadSettings() {
       downloadDirectory = settings.downloadDirectory;
     }
     alwaysOnTop = settings.alwaysOnTop === true;
-    downloadRightsConfirmed = settings.downloadRightsConfirmed === true;
   } catch {
     // First launch or an unreadable settings file falls back to Downloads.
   }
@@ -80,12 +77,12 @@ function saveSettings() {
       {
         alwaysOnTop,
         downloadDirectory,
-        downloadRightsConfirmed
+        downloadRightsConfirmed: false,
       },
       null,
-      2
+      2,
     ),
-    "utf8"
+    "utf8",
   );
 }
 
@@ -95,7 +92,10 @@ function availableDownloadPath(filename) {
   let candidate = path.join(downloadDirectory, safeFilename);
   let suffix = 1;
   while (fs.existsSync(candidate)) {
-    candidate = path.join(downloadDirectory, `${parsed.name} (${suffix})${parsed.ext}`);
+    candidate = path.join(
+      downloadDirectory,
+      `${parsed.name} (${suffix})${parsed.ext}`,
+    );
     suffix += 1;
   }
   return candidate;
@@ -110,6 +110,56 @@ function downloadFilename(title = "") {
   return `${safeTitle || "Media Scout video"}.mp4`;
 }
 
+function trackedSpawn(command, args, options) {
+  const child = spawn(command, args, options);
+  activeChildren.add(child);
+  child.once("close", (code) => {
+    activeChildren.delete(child);
+    if (code && !appClosing) {
+      console.error("[media-scout] child process failed", {
+        command: path.basename(command),
+        exitCode: code,
+      });
+    }
+  });
+  return child;
+}
+
+function cleanupTemporaryFiles() {
+  const now = Date.now();
+  const targets = [
+    {
+      directory: app.getPath("temp"),
+      maxAge: 24 * 60 * 60 * 1000,
+      pattern: /\.working(?:\.mp4)?$/,
+    },
+    {
+      directory: path.join(app.getPath("temp"), "media-scout-previews"),
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      pattern: /\.mp4$/,
+    },
+  ];
+  for (const target of targets) {
+    if (!fs.existsSync(target.directory)) continue;
+    for (const entry of fs.readdirSync(target.directory, {
+      withFileTypes: true,
+    })) {
+      if (!entry.isFile() || !target.pattern.test(entry.name)) continue;
+      const filePath = path.join(target.directory, entry.name);
+      try {
+        if (now - fs.statSync(filePath).mtimeMs > target.maxAge) {
+          fs.rmSync(filePath, { force: true });
+        }
+      } catch (error) {
+        console.error("[media-scout] temporary file cleanup failed", {
+          file: entry.name,
+          message: error.message,
+        });
+      }
+    }
+  }
+}
+
 function mergeMediaDownload(videoUrl, audioUrl, title = "") {
   const outputPath = availableDownloadPath(downloadFilename(title));
   const temporaryPath = `${outputPath}.${crypto.randomUUID()}.working`;
@@ -117,23 +167,32 @@ function mergeMediaDownload(videoUrl, audioUrl, title = "") {
   send("download:started", { filename, url: videoUrl });
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(
+    const child = trackedSpawn(
       ffmpegPath,
       [
         "-y",
-        "-i", videoUrl,
-        "-i", audioUrl,
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "copy",
-        "-c:a", "aac",
-        "-b:a", "160k",
+        "-i",
+        videoUrl,
+        "-i",
+        audioUrl,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "160k",
         "-shortest",
-        "-movflags", "+faststart",
-        "-f", "mp4",
-        temporaryPath
+        "-movflags",
+        "+faststart",
+        "-f",
+        "mp4",
+        temporaryPath,
       ],
-      { windowsHide: true }
+      { windowsHide: true },
     );
     const finish = (state) => {
       if (settled) return;
@@ -142,17 +201,21 @@ function mergeMediaDownload(videoUrl, audioUrl, title = "") {
         filename,
         path: state === "completed" ? outputPath : "",
         state,
-        url: videoUrl
+        url: videoUrl,
       });
+      if (state === "completed")
+        completedDownloadPaths.add(path.resolve(outputPath));
       resolve({ ok: state === "completed" });
     };
     child.once("error", () => {
-      if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+      if (fs.existsSync(temporaryPath))
+        fs.rmSync(temporaryPath, { force: true });
       finish("interrupted");
     });
     child.once("exit", (code) => {
       if (code !== 0 || !fs.existsSync(temporaryPath)) {
-        if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+        if (fs.existsSync(temporaryPath))
+          fs.rmSync(temporaryPath, { force: true });
         finish("interrupted");
         return;
       }
@@ -160,7 +223,8 @@ function mergeMediaDownload(videoUrl, audioUrl, title = "") {
         fs.renameSync(temporaryPath, outputPath);
         finish("completed");
       } catch {
-        if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+        if (fs.existsSync(temporaryPath))
+          fs.rmSync(temporaryPath, { force: true });
         finish("interrupted");
       }
     });
@@ -174,7 +238,7 @@ function downloadYouTubePage(pageUrl, title, sourceUrl) {
   let settled = false;
   send("download:started", { filename, url: sourceUrl });
   return new Promise((resolve) => {
-    const child = spawn(
+    const child = trackedSpawn(
       ytDlpPath,
       [
         "--no-playlist",
@@ -183,12 +247,15 @@ function downloadYouTubePage(pageUrl, title, sourceUrl) {
         "--format",
         "bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/" +
           "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
-        "--ffmpeg-location", path.dirname(unpackedBinaryPath(ffmpegPath)),
-        "--merge-output-format", "mp4",
-        "--output", temporaryPath,
-        pageUrl
+        "--ffmpeg-location",
+        path.dirname(unpackedBinaryPath(ffmpegPath)),
+        "--merge-output-format",
+        "mp4",
+        "--output",
+        temporaryPath,
+        pageUrl,
       ],
-      { windowsHide: true }
+      { windowsHide: true },
     );
     const finish = (state) => {
       if (settled) return;
@@ -197,14 +264,17 @@ function downloadYouTubePage(pageUrl, title, sourceUrl) {
         filename,
         path: state === "completed" ? outputPath : "",
         state,
-        url: sourceUrl
+        url: sourceUrl,
       });
+      if (state === "completed")
+        completedDownloadPaths.add(path.resolve(outputPath));
       resolve({ ok: state === "completed" });
     };
     child.once("error", () => finish("interrupted"));
     child.once("exit", (code) => {
       if (code !== 0 || !fs.existsSync(temporaryPath)) {
-        if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+        if (fs.existsSync(temporaryPath))
+          fs.rmSync(temporaryPath, { force: true });
         finish("interrupted");
         return;
       }
@@ -212,7 +282,8 @@ function downloadYouTubePage(pageUrl, title, sourceUrl) {
         fs.renameSync(temporaryPath, outputPath);
         finish("completed");
       } catch {
-        if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
+        if (fs.existsSync(temporaryPath))
+          fs.rmSync(temporaryPath, { force: true });
         finish("interrupted");
       }
     });
@@ -233,18 +304,21 @@ async function downloadDouyinPage(pageUrl, title, sourceUrl) {
   send("download:started", { filename, url: sourceUrl });
 
   return new Promise((resolve) => {
-    const child = spawn(
+    const child = trackedSpawn(
       ytDlpPath,
       [
         "--no-playlist",
         "--no-warnings",
         "--force-overwrites",
-        "--cookies", douyinSession.cookieFile,
-        "--format", "best[vcodec^=h264]/best[vcodec^=avc]/best",
-        "--output", temporaryPath,
-        pageUrl
+        "--cookies",
+        douyinSession.cookieFile,
+        "--format",
+        "best[vcodec^=h264]/best[vcodec^=avc]/best",
+        "--output",
+        temporaryPath,
+        pageUrl,
       ],
-      { windowsHide: true }
+      { windowsHide: true },
     );
     const finish = (state) => {
       if (settled) return;
@@ -254,8 +328,10 @@ async function downloadDouyinPage(pageUrl, title, sourceUrl) {
         filename,
         path: state === "completed" ? outputPath : "",
         state,
-        url: sourceUrl
+        url: sourceUrl,
       });
+      if (state === "completed")
+        completedDownloadPaths.add(path.resolve(outputPath));
       resolve({ ok: state === "completed" });
     };
     child.once("error", () => finish("interrupted"));
@@ -299,29 +375,42 @@ function transcodePreview(url, audioUrl = "") {
     const temporaryPath = `${outputPath}.${crypto.randomUUID()}.working`;
     const inputArguments = ["-i", url];
     if (audioUrl) inputArguments.push("-i", audioUrl);
-    const child = spawn(
+    const child = trackedSpawn(
       ffmpegPath,
       [
         "-y",
         ...inputArguments,
-        "-map", "0:v:0?",
-        "-map", audioUrl ? "1:a:0?" : "0:a:0?",
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "160k",
-        "-movflags", "+faststart",
-        "-f", "mp4",
-        temporaryPath
+        "-map",
+        "0:v:0?",
+        "-map",
+        audioUrl ? "1:a:0?" : "0:a:0?",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "160k",
+        "-movflags",
+        "+faststart",
+        "-f",
+        "mp4",
+        temporaryPath,
       ],
-      { windowsHide: true }
+      { windowsHide: true },
     );
     const timeout = setTimeout(() => child.kill(), 180_000);
     child.once("error", () => {
       clearTimeout(timeout);
-      resolve({ ok: false, message: "The compatible preview converter could not start." });
+      resolve({
+        ok: false,
+        message: "The compatible preview converter could not start.",
+      });
     });
     child.once("exit", (code) => {
       clearTimeout(timeout);
@@ -334,13 +423,21 @@ function transcodePreview(url, audioUrl = "") {
           }
           resolve({ ok: true, url: pathToFileURL(outputPath).href });
         } catch {
-          if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
-          resolve({ ok: false, message: "Preview unavailable. You can still save the media." });
+          if (fs.existsSync(temporaryPath))
+            fs.rmSync(temporaryPath, { force: true });
+          resolve({
+            ok: false,
+            message: "Preview unavailable. You can still save the media.",
+          });
         }
         return;
       }
-      if (fs.existsSync(temporaryPath)) fs.rmSync(temporaryPath, { force: true });
-      resolve({ ok: false, message: "This Douyin video could not be converted for preview." });
+      if (fs.existsSync(temporaryPath))
+        fs.rmSync(temporaryPath, { force: true });
+      resolve({
+        ok: false,
+        message: "This Douyin video could not be converted for preview.",
+      });
     });
   });
   previewConversions.set(outputPath, conversion);
@@ -383,7 +480,7 @@ async function resolveAndCapture(rawUrl, source = "Public page resolver") {
       douyinSession = await createAnonymousDouyinSession(rawUrl);
     }
     resolved = await resolvePublicPage(rawUrl, {
-      cookieFile: douyinSession?.cookieFile
+      cookieFile: douyinSession?.cookieFile,
     });
   } finally {
     douyinSession?.dispose();
@@ -392,31 +489,36 @@ async function resolveAndCapture(rawUrl, source = "Public page resolver") {
   let added = 0;
   for (const url of resolved.candidates) {
     const parsed = parseHttpUrl(url);
-    if (!parsed || isBlockedHost(parsed.hostname)) continue;
+    if (!parsed) continue;
     const analysis = resolved.analysis
       ? {
           ...resolved.analysis,
           audioUrl:
-            resolved.analysis.audioUrl || resolved.analysis.audioSourceUrl || ""
+            resolved.analysis.audioUrl ||
+            resolved.analysis.audioSourceUrl ||
+            "",
         }
       : null;
     if (analysis) delete analysis.audioSourceUrl;
-    if (addDetectedMedia({
-      allowed: true,
-      analysis,
-      detectedAt: new Date().toISOString(),
-      extension: ".mp4",
-      hostname: parsed.hostname,
-      mime: "video/mp4",
-      pageHost: new URL(resolved.pageUrl).hostname,
-      pageUrl: resolved.pageUrl,
-      size: resolved.candidateSizes?.[parsed.href] || 0,
-      source,
-      thumbnail: resolved.thumbnail || "",
-      title: resolved.title || "",
-      variants: resolved.variants || [],
-      url: parsed.href
-    })) added += 1;
+    if (
+      addDetectedMedia({
+        allowed: true,
+        analysis,
+        detectedAt: new Date().toISOString(),
+        extension: ".mp4",
+        hostname: parsed.hostname,
+        mime: "video/mp4",
+        pageHost: new URL(resolved.pageUrl).hostname,
+        pageUrl: resolved.pageUrl,
+        size: resolved.candidateSizes?.[parsed.href] || 0,
+        source,
+        thumbnail: resolved.thumbnail || "",
+        title: resolved.title || "",
+        variants: resolved.variants || [],
+        url: parsed.href,
+      })
+    )
+      added += 1;
   }
   return { added, ok: true };
 }
@@ -424,28 +526,22 @@ async function resolveAndCapture(rawUrl, source = "Public page resolver") {
 function configureMediaSession() {
   const mediaSession = session.fromPartition(MEDIA_PARTITION);
 
-  mediaSession.webRequest.onBeforeRequest((details, callback) => {
-    const parsed = parseHttpUrl(details.url);
-    if (parsed && isBlockedHost(parsed.hostname)) {
-      callback({ cancel: true });
-      return;
-    }
-    callback({});
-  });
-
   mediaSession.on("will-download", (_event, item) => {
     item.setSavePath(availableDownloadPath(item.getFilename()));
     send("download:started", {
       filename: item.getFilename(),
-      url: item.getURL()
+      url: item.getURL(),
     });
 
     item.once("done", (_downloadEvent, state) => {
+      if (state === "completed") {
+        completedDownloadPaths.add(path.resolve(item.getSavePath()));
+      }
       send("download:finished", {
         filename: item.getFilename(),
         path: item.getSavePath(),
         state,
-        url: item.getURL()
+        url: item.getURL(),
       });
     });
 
@@ -457,7 +553,7 @@ function configureMediaSession() {
         receivedBytes,
         state,
         totalBytes,
-        url: item.getURL()
+        url: item.getURL(),
       });
     });
   });
@@ -473,9 +569,9 @@ function launchCaptureBridge() {
       const douyinSession = await createAnonymousDouyinSession(pageUrl);
       return {
         cookieFile: douyinSession.cookieFile,
-        dispose: () => douyinSession.dispose()
+        dispose: () => douyinSession.dispose(),
       };
-    }
+    },
   );
   captureBridge.once("error", () => {
     captureBridge = null;
@@ -503,9 +599,9 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      webviewTag: false,
-      partition: MEDIA_PARTITION
-    }
+      sandbox: true,
+      partition: MEDIA_PARTITION,
+    },
   });
   mainWindow.setAlwaysOnTop(alwaysOnTop);
 
@@ -514,73 +610,77 @@ function createWindow() {
   const capturePath = process.env.MEDIA_SCOUT_CAPTURE_PATH;
   if (capturePath) {
     mainWindow.webContents.once("did-finish-load", () => {
-      setTimeout(async () => {
-        if (process.env.MEDIA_SCOUT_START_URL) {
-          await resolveAndCapture(process.env.MEDIA_SCOUT_START_URL);
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
-        if (!process.env.MEDIA_SCOUT_START_URL) {
-          const sampleUrl =
-            "https://archive.org/download/ElephantsDream/ed_1024_512kb.mp4";
-          detectedUrls.add(sampleUrl);
-          detectedKeys.add(mediaKey(sampleUrl));
-          send("media:detected", {
-            allowed: true,
-            detectedAt: new Date().toISOString(),
-            extension: ".mp4",
-            hostname: "archive.org",
-            mime: "video/mp4",
-            pageHost: "archive.org",
-            size: 47_382_528,
-            url: sampleUrl
-          });
-          await new Promise((resolve) => setTimeout(resolve, 250));
-        }
-        if (process.env.MEDIA_SCOUT_CAPTURE_LIST === "yes") {
-          for (let index = 1; index <= 12; index += 1) {
-            const sampleUrl = `http://127.0.0.1/local-video-${index}.mp4`;
+      setTimeout(
+        async () => {
+          if (process.env.MEDIA_SCOUT_START_URL) {
+            await resolveAndCapture(process.env.MEDIA_SCOUT_START_URL);
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          if (!process.env.MEDIA_SCOUT_START_URL) {
+            const sampleUrl =
+              "https://archive.org/download/ElephantsDream/ed_1024_512kb.mp4";
             detectedUrls.add(sampleUrl);
             detectedKeys.add(mediaKey(sampleUrl));
             send("media:detected", {
               allowed: true,
               detectedAt: new Date().toISOString(),
               extension: ".mp4",
-              hostname: "127.0.0.1",
+              hostname: "archive.org",
               mime: "video/mp4",
-              pageHost: "Local layout test",
-              size: index * 1_048_576,
-              url: sampleUrl
+              pageHost: "archive.org",
+              size: 47_382_528,
+              url: sampleUrl,
             });
+            await new Promise((resolve) => setTimeout(resolve, 250));
           }
-          await new Promise((resolve) => setTimeout(resolve, 350));
-        }
-        if (process.env.MEDIA_SCOUT_CAPTURE_PREVIEW !== "no") {
-          await mainWindow.webContents.executeJavaScript(
-            "document.querySelector('.preview-button')?.click()"
-          );
-        }
-        if (process.env.MEDIA_SCOUT_CAPTURE_VIEW) {
-          const view = JSON.stringify(process.env.MEDIA_SCOUT_CAPTURE_VIEW);
-          await mainWindow.webContents.executeJavaScript(
-            `document.querySelector('[data-view=' + ${view} + ']')?.click()`
-          );
-        }
-        if (process.env.MEDIA_SCOUT_CAPTURE_RIGHTS === "yes") {
-          await mainWindow.webContents.executeJavaScript(
-            "document.querySelector('#rightsDialog')?.showModal()"
-          );
-        }
-        await new Promise((resolve) => setTimeout(resolve, 850));
-        const image = await mainWindow.webContents.capturePage();
-        fs.writeFileSync(capturePath, image.toPNG());
-        app.quit();
-      }, process.env.MEDIA_SCOUT_START_URL ? 9_000 : 1_600);
+          if (process.env.MEDIA_SCOUT_CAPTURE_LIST === "yes") {
+            for (let index = 1; index <= 12; index += 1) {
+              const sampleUrl = `http://127.0.0.1/local-video-${index}.mp4`;
+              detectedUrls.add(sampleUrl);
+              detectedKeys.add(mediaKey(sampleUrl));
+              send("media:detected", {
+                allowed: true,
+                detectedAt: new Date().toISOString(),
+                extension: ".mp4",
+                hostname: "127.0.0.1",
+                mime: "video/mp4",
+                pageHost: "Local layout test",
+                size: index * 1_048_576,
+                url: sampleUrl,
+              });
+            }
+            await new Promise((resolve) => setTimeout(resolve, 350));
+          }
+          if (process.env.MEDIA_SCOUT_CAPTURE_PREVIEW !== "no") {
+            await mainWindow.webContents.executeJavaScript(
+              "document.querySelector('.preview-button')?.click()",
+            );
+          }
+          if (process.env.MEDIA_SCOUT_CAPTURE_VIEW) {
+            const view = JSON.stringify(process.env.MEDIA_SCOUT_CAPTURE_VIEW);
+            await mainWindow.webContents.executeJavaScript(
+              `document.querySelector('[data-view=' + ${view} + ']')?.click()`,
+            );
+          }
+          if (process.env.MEDIA_SCOUT_CAPTURE_RIGHTS === "yes") {
+            await mainWindow.webContents.executeJavaScript(
+              "document.querySelector('#rightsDialog')?.showModal()",
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 850));
+          const image = await mainWindow.webContents.capturePage();
+          fs.writeFileSync(capturePath, image.toPNG());
+          app.quit();
+        },
+        process.env.MEDIA_SCOUT_START_URL ? 9_000 : 1_600,
+      );
     });
   }
 }
 
 app.whenReady().then(() => {
   loadSettings();
+  cleanupTemporaryFiles();
   configureMediaSession();
   launchCaptureBridge();
   createWindow();
@@ -593,17 +693,15 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   appClosing = true;
   clearTimeout(captureBridgeRetryTimer);
-  if (captureBridge) captureBridge.close();
+  if (captureBridge) captureBridge.shutdown();
+  for (const child of activeChildren) child.kill();
   if (process.platform !== "darwin") app.quit();
 });
 
 ipcMain.handle("navigation:validate", (_event, rawUrl) => {
   const parsed = parseHttpUrl(rawUrl);
-  if (!parsed) return { ok: false, message: "Enter a valid http:// or https:// address." };
-  if (isBlockedHost(parsed.hostname)) {
-    return { ok: false, message: "This provider is excluded by Media Scout policy." };
-  }
-  lastPageHost = parsed.hostname;
+  if (!parsed)
+    return { ok: false, message: "Enter a valid http:// or https:// address." };
   return { ok: true, url: parsed.href };
 });
 
@@ -612,7 +710,7 @@ ipcMain.handle("app:get-config", () => ({
   startUrl: process.env.MEDIA_SCOUT_START_URL || DEFAULT_START_URL,
   downloadDirectory,
   alwaysOnTop,
-  downloadRightsConfirmed
+  downloadRightsConfirmed,
 }));
 
 ipcMain.handle("settings:confirm-download-rights", () => {
@@ -646,7 +744,7 @@ ipcMain.handle("settings:choose-download-directory", async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     defaultPath: downloadDirectory,
     properties: ["openDirectory", "createDirectory"],
-    title: "Choose download location"
+    title: "Choose download location",
   });
   if (result.canceled || !result.filePaths[0]) {
     return { cancelled: true, ok: false };
@@ -674,73 +772,86 @@ ipcMain.handle("page:resolve", async (_event, rawUrl) => {
 
 ipcMain.handle("media:copy", (_event, url) => {
   const parsed = parseHttpUrl(url);
-  if (!parsed || isBlockedHost(parsed.hostname) || !detectedUrls.has(parsed.href)) {
-    return { ok: false, message: "This link is not an approved detected media request." };
+  if (!parsed || !detectedUrls.has(parsed.href)) {
+    return {
+      ok: false,
+      message: "This link is not an approved detected media request.",
+    };
   }
   clipboard.writeText(parsed.href);
   return { ok: true };
 });
 
-ipcMain.handle("media:download", async (
-  _event,
-  url,
-  audioUrl = "",
-  title = "",
-  pageUrl = ""
-) => {
-  const parsed = parseHttpUrl(url);
-  const parsedAudio = audioUrl ? parseHttpUrl(audioUrl) : null;
-  if (!parsed || isBlockedHost(parsed.hostname) || !detectedUrls.has(parsed.href)) {
-    return { ok: false, message: "This link is not an approved detected media request." };
-  }
-  if (audioUrl && (!parsedAudio || !detectedUrls.has(parsedAudio.href))) {
-    return { ok: false, message: "The detected audio track is unavailable." };
-  }
+ipcMain.handle(
+  "media:download",
+  async (_event, url, audioUrl = "", title = "", pageUrl = "") => {
+    const parsed = parseHttpUrl(url);
+    const parsedAudio = audioUrl ? parseHttpUrl(audioUrl) : null;
+    if (!parsed || !detectedUrls.has(parsed.href)) {
+      return {
+        ok: false,
+        message: "This link is not an approved detected media request.",
+      };
+    }
+    if (audioUrl && (!parsedAudio || !detectedUrls.has(parsedAudio.href))) {
+      return { ok: false, message: "The detected audio track is unavailable." };
+    }
 
-  if (!downloadRightsConfirmed) {
-    return { ok: false, needsPermission: true };
-  }
-  const parsedPage = parseHttpUrl(pageUrl);
-  if (
-    parsedPage &&
-    ["youtube.com", "www.youtube.com", "m.youtube.com"].includes(
-      parsedPage.hostname.toLowerCase()
-    )
-  ) {
-    return downloadYouTubePage(parsedPage.href, title, parsed.href);
-  }
-  if (parsedPage && isDouyinVideoUrl(parsedPage.href)) {
-    return downloadDouyinPage(parsedPage.href, title, parsed.href);
-  }
-  if (parsedAudio) {
-    return mergeMediaDownload(parsed.href, parsedAudio.href, title);
-  }
-  session.fromPartition(MEDIA_PARTITION).downloadURL(parsed.href);
-  return { ok: true };
-});
+    if (!downloadRightsConfirmed) {
+      return { ok: false, needsPermission: true };
+    }
+    const parsedPage = parseHttpUrl(pageUrl);
+    if (
+      parsedPage &&
+      ["youtube.com", "www.youtube.com", "m.youtube.com"].includes(
+        parsedPage.hostname.toLowerCase(),
+      )
+    ) {
+      return downloadYouTubePage(parsedPage.href, title, parsed.href);
+    }
+    if (parsedPage && isDouyinVideoUrl(parsedPage.href)) {
+      return downloadDouyinPage(parsedPage.href, title, parsed.href);
+    }
+    if (parsedAudio) {
+      return mergeMediaDownload(parsed.href, parsedAudio.href, title);
+    }
+    session.fromPartition(MEDIA_PARTITION).downloadURL(parsed.href);
+    return { ok: true };
+  },
+);
 
-ipcMain.handle("media:compatible-preview", async (_event, url, audioUrl = "") => {
-  const parsed = parseHttpUrl(url);
-  const parsedAudio = audioUrl ? parseHttpUrl(audioUrl) : null;
-  if (!parsed || !detectedUrls.has(parsed.href)) {
-    return { ok: false, message: "This is not an approved detected media request." };
-  }
-  if (audioUrl && (!parsedAudio || !detectedUrls.has(parsedAudio.href))) {
-    return { ok: false, message: "The detected audio track is unavailable." };
-  }
-  return transcodePreview(parsed.href, parsedAudio?.href || "");
-});
+ipcMain.handle(
+  "media:compatible-preview",
+  async (_event, url, audioUrl = "") => {
+    const parsed = parseHttpUrl(url);
+    const parsedAudio = audioUrl ? parseHttpUrl(audioUrl) : null;
+    if (!parsed || !detectedUrls.has(parsed.href)) {
+      return {
+        ok: false,
+        message: "This is not an approved detected media request.",
+      };
+    }
+    if (audioUrl && (!parsedAudio || !detectedUrls.has(parsedAudio.href))) {
+      return { ok: false, message: "The detected audio track is unavailable." };
+    }
+    return transcodePreview(parsed.href, parsedAudio?.href || "");
+  },
+);
 
 ipcMain.handle("media:open-browser", (_event, url) => {
   const parsed = parseHttpUrl(url);
-  if (!parsed || isBlockedHost(parsed.hostname) || !detectedUrls.has(parsed.href)) {
-    return { ok: false, message: "This link is not an approved detected media request." };
+  if (!parsed || !detectedUrls.has(parsed.href)) {
+    return {
+      ok: false,
+      message: "This link is not an approved detected media request.",
+    };
   }
-  if (!captureBridge) return { ok: false, message: "The browser bridge is unavailable." };
+  if (!captureBridge)
+    return { ok: false, message: "The browser bridge is unavailable." };
   captureBridge.enqueueCommand({
     createdAt: Date.now(),
     type: "open-media",
-    url: parsed.href
+    url: parsed.href,
   });
   return { ok: true };
 });
@@ -752,5 +863,14 @@ ipcMain.handle("media:clear", () => {
 });
 
 ipcMain.handle("file:show", (_event, filePath) => {
-  if (filePath) shell.showItemInFolder(filePath);
+  if (typeof filePath !== "string") return { ok: false };
+  const resolved = path.resolve(filePath);
+  if (!completedDownloadPaths.has(resolved) || !fs.existsSync(resolved)) {
+    return {
+      ok: false,
+      message: "This file is not a completed Media Scout download.",
+    };
+  }
+  shell.showItemInFolder(resolved);
+  return { ok: true };
 });

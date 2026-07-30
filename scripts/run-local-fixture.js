@@ -16,7 +16,7 @@ server.listen(0, "127.0.0.1", () => {
   const child = spawn(electronExecutable, [projectRoot], {
     cwd: projectRoot,
     env: { ...process.env, MEDIA_SCOUT_START_URL: startUrl },
-    stdio: "inherit"
+    stdio: "inherit",
   });
 
   child.once("exit", (code) => {

@@ -1,7 +1,7 @@
 allowBuilds:
   electron: true
   electron-winstaller: true
-  '@distube/yt-dlp': true
+  "@distube/yt-dlp": true
   ffmpeg-static: true
 onlyBuiltDependencies:
   - electron

@@ -1,7 +1,12 @@
 :root {
   color-scheme: dark;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
     sans-serif;
   --bg: #171316;
   --surface: #211b20;
@@ -45,7 +50,11 @@ button {
   padding: 0 22px;
   border-bottom: 1px solid var(--line);
   background:
-    radial-gradient(circle at 25% -90%, rgb(239 127 138 / 20%), transparent 38%),
+    radial-gradient(
+      circle at 25% -90%,
+      rgb(239 127 138 / 20%),
+      transparent 38%
+    ),
     linear-gradient(110deg, #292025, #171316);
 }
 
@@ -221,26 +230,6 @@ main {
   overflow: hidden;
 }
 
-.browser-panel {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  padding: 10px;
-  background: #080a0e;
-}
-
-webview {
-  display: flex;
-  flex: 1 1 auto;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  border-radius: 10px;
-  background: white;
-}
-
 .results-panel {
   position: relative;
   display: flex;
@@ -250,8 +239,7 @@ webview {
   overflow: hidden;
   height: 100%;
   background:
-    linear-gradient(rgb(128 134 255 / 3%), transparent 260px),
-    var(--surface);
+    linear-gradient(rgb(128 134 255 / 3%), transparent 260px), var(--surface);
 }
 
 .results-heading {
@@ -728,7 +716,9 @@ h2 {
 
 @keyframes saved-card {
   50% {
-    box-shadow: 0 0 0 2px rgb(239 127 138 / 20%), 0 0 28px rgb(239 127 138 / 13%);
+    box-shadow:
+      0 0 0 2px rgb(239 127 138 / 20%),
+      0 0 28px rgb(239 127 138 / 13%);
   }
 }
 
@@ -899,8 +889,7 @@ h2 {
   max-height: 70vh;
   overflow: hidden;
   place-items: center;
-  background:
-    radial-gradient(circle at center, #30252b, #090709 70%);
+  background: radial-gradient(circle at center, #30252b, #090709 70%);
 }
 
 #videoPreview {
@@ -927,8 +916,7 @@ h2 {
   border-radius: 36px;
   color: var(--accent);
   background:
-    radial-gradient(circle, rgb(239 127 138 / 24%), transparent 65%),
-    #111c1a;
+    radial-gradient(circle, rgb(239 127 138 / 24%), transparent 65%), #111c1a;
   box-shadow: 0 18px 60px rgb(0 0 0 / 38%);
   font-size: 50px;
 }
@@ -954,8 +942,11 @@ h2 {
   align-content: center;
   gap: 12px;
   max-width: none;
-  background:
-    radial-gradient(circle at center, rgb(48 37 43 / 94%), rgb(9 7 9 / 98%) 70%);
+  background: radial-gradient(
+    circle at center,
+    rgb(48 37 43 / 94%),
+    rgb(9 7 9 / 98%) 70%
+  );
 }
 
 .preview-error.loading::before {
@@ -1623,7 +1614,10 @@ body {
   box-shadow:
     0 14px 35px rgb(0 0 0 / 24%),
     inset 0 1px rgb(255 255 255 / 4%);
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .support-card:hover .platform-thumbnail {
