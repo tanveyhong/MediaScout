@@ -1037,6 +1037,27 @@ ipcMain.handle("extension:show-folder", () => {
   return { ok: true };
 });
 
+ipcMain.handle("extension:force-refresh", () => {
+  if (!captureBridge?.listening) {
+    return {
+      ok: false,
+      message: "The browser companion bridge is unavailable.",
+    };
+  }
+  if (!captureBridge.isPaired()) {
+    return {
+      ok: false,
+      message: "Pair the browser companion before forcing a refresh.",
+    };
+  }
+  captureBridge.enqueueCommand({
+    createdAt: Date.now(),
+    type: "capture-active",
+  });
+  appData?.log("info", "force-refresh-requested");
+  return { ok: true };
+});
+
 ipcMain.handle("page:resolve", async (_event, rawUrl) => {
   return resolveAndCapture(rawUrl);
 });

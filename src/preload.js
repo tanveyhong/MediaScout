@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("mediaScout", {
     ipcRenderer.invoke("settings:choose-download-directory"),
   copyExtensionPath: () => ipcRenderer.invoke("extension:copy-path"),
   showExtensionFolder: () => ipcRenderer.invoke("extension:show-folder"),
+  forceRefresh: () => ipcRenderer.invoke("extension:force-refresh"),
   toggleAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),

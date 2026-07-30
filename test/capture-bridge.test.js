@@ -62,6 +62,24 @@ test("delivers queued browser commands only to extension origins", async () => {
   }
 });
 
+test("delivers a force-refresh command to the paired companion", async () => {
+  const server = startCaptureBridge(() => {}, 0);
+  await new Promise((resolve) => server.once("listening", resolve));
+  const { port } = server.address();
+  server.enqueueCommand({ type: "capture-active" });
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/commands`, {
+      headers: { Origin: "chrome-extension://trustedcompanion" },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).commands, [
+      { type: "capture-active" },
+    ]);
+  } finally {
+    server.shutdown();
+  }
+});
+
 test("pairs with one extension origin for the lifetime of the bridge", async () => {
   const server = startCaptureBridge(() => {}, 0);
   await new Promise((resolve) => server.once("listening", resolve));

@@ -429,6 +429,7 @@ function startCaptureBridge(
     for (const socket of sockets) socket.destroy();
     sockets.clear();
   };
+  server.isPaired = () => Boolean(pairedOrigin);
 
   server.enqueueCommand = (command) => {
     commands.push(command);
