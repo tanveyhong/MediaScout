@@ -42,7 +42,9 @@ jobs:
         shell: pwsh
         run: |
           Get-ChildItem dist -File |
-            Where-Object Extension -In ".exe", ".yml", ".blockmap" |
+            Where-Object {
+              $_.Extension -In ".exe", ".blockmap" -or $_.Name -eq "latest.yml"
+            } |
             ForEach-Object {
               "$(($_ | Get-FileHash -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
             } | Set-Content dist/SHA256SUMS.txt
@@ -59,7 +61,10 @@ jobs:
         shell: pwsh
         run: |
           $assets = Get-ChildItem dist -File |
-            Where-Object Extension -In ".exe", ".yml", ".blockmap", ".txt" |
+            Where-Object {
+              $_.Extension -In ".exe", ".blockmap", ".txt" -or
+              $_.Name -eq "latest.yml"
+            } |
             Select-Object -ExpandProperty FullName
           gh release create "${{ github.ref_name }}" `
             $assets `
