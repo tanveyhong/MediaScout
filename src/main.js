@@ -77,6 +77,7 @@ let runningOnBattery = false;
 const pendingDownloadMetadata = new Map();
 const detectedUrls = new Set();
 const detectedKeys = new Set();
+const detectedHlsUrls = new Set();
 const previewConversions = new Map();
 const ytDlpPath = unpackedBinaryPath(
   path.join(
@@ -288,6 +289,10 @@ function downloadTask(descriptor) {
         descriptor.title,
         descriptor.pageUrl,
       );
+  }
+  if (descriptor.type === "hls") {
+    return () =>
+      downloadHlsPlaylist(descriptor.url, descriptor.title, descriptor.pageUrl);
   }
   return () =>
     new Promise((resolve) => {
@@ -582,6 +587,89 @@ function mergeMediaDownload(videoUrl, audioUrl, title = "", pageUrl = "") {
   });
 }
 
+function downloadHlsPlaylist(url, title = "", pageUrl = "") {
+  const outputPath = availableDownloadPath(
+    downloadFilename(title, ".mp4", pageUrl),
+  );
+  const temporaryPath = `${outputPath}.${crypto.randomUUID()}.working.mp4`;
+  const filename = path.basename(outputPath);
+  registerRecovery(temporaryPath, { pageUrl, sourceUrl: url, title });
+  send("download:started", { filename, url });
+  return new Promise((resolve) => {
+    let settled = false;
+    const child = trackedSpawn(
+      ffmpegPath,
+      [
+        "-y",
+        "-i",
+        url,
+        "-map",
+        "0:v?",
+        "-map",
+        "0:a?",
+        "-c",
+        "copy",
+        "-bsf:a",
+        "aac_adtstoasc",
+        "-movflags",
+        "+faststart",
+        "-f",
+        "mp4",
+        temporaryPath,
+      ],
+      { windowsHide: true },
+    );
+    activeDownloadHandles.set(url, child);
+    send("download:progress", {
+      percent: 0,
+      phase: "Downloading HLS playlist",
+      state: "progressing",
+      url,
+    });
+    const finish = (state) => {
+      if (settled) return;
+      settled = true;
+      clearRecovery(temporaryPath);
+      activeDownloadHandles.delete(url);
+      if (state === "completed")
+        completedDownloadPaths.add(path.resolve(outputPath));
+      send("download:finished", {
+        filename,
+        path: state === "completed" ? outputPath : "",
+        state,
+        url,
+      });
+      finishHistory({
+        filename,
+        outputPath,
+        pageUrl,
+        sourceUrl: url,
+        state,
+        title,
+      });
+      resolve({ ok: state === "completed" });
+    };
+    child.once("error", () => {
+      fs.rmSync(temporaryPath, { force: true });
+      finish("interrupted");
+    });
+    child.once("exit", (code) => {
+      if (code !== 0 || !fs.existsSync(temporaryPath)) {
+        fs.rmSync(temporaryPath, { force: true });
+        finish("interrupted");
+        return;
+      }
+      try {
+        fs.renameSync(temporaryPath, outputPath);
+        finish("completed");
+      } catch {
+        fs.rmSync(temporaryPath, { force: true });
+        finish("interrupted");
+      }
+    });
+  });
+}
+
 function downloadYouTubePage(pageUrl, title, sourceUrl) {
   const extension = preferences.audioOnly ? ".mp3" : ".mp4";
   const outputPath = availableDownloadPath(
@@ -858,6 +946,14 @@ function addDetectedMedia(media) {
   if (detectedKeys.has(key)) return false;
   detectedKeys.add(key);
   detectedUrls.add(media.url);
+  if (
+    media.extension === ".m3u8" ||
+    ["application/vnd.apple.mpegurl", "application/x-mpegurl"].includes(
+      media.mime,
+    )
+  ) {
+    detectedHlsUrls.add(media.url);
+  }
   if (media.analysis?.audioUrl) detectedUrls.add(media.analysis.audioUrl);
   for (const variant of media.variants || []) {
     if (variant.url) detectedUrls.add(variant.url);
@@ -1463,6 +1559,20 @@ ipcMain.handle(
         title,
       });
     }
+    const classification = classifyMedia(parsed.href);
+    if (classification.isHls || detectedHlsUrls.has(parsed.href)) {
+      const descriptor = {
+        audioUrl: "",
+        pageUrl,
+        title,
+        type: "hls",
+        url: parsed.href,
+      };
+      return enqueueDownload(parsed.href, downloadTask(descriptor), {
+        descriptor,
+        title,
+      });
+    }
     const descriptor = {
       audioUrl: "",
       pageUrl,
@@ -1554,6 +1664,7 @@ ipcMain.handle("media:open-browser", (_event, url) => {
 
 ipcMain.handle("media:clear", () => {
   detectedUrls.clear();
+  detectedHlsUrls.clear();
   detectedKeys.clear();
   return { ok: true };
 });
@@ -1727,6 +1838,7 @@ ipcMain.handle("privacy:clear-data", async () => {
   appData.clearHistory();
   appData.clearLogs();
   detectedUrls.clear();
+  detectedHlsUrls.clear();
   detectedKeys.clear();
   preferences = { ...DEFAULT_PREFERENCES };
   fs.rmSync(settingsPath(), { force: true });

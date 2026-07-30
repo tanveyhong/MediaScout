@@ -1,6 +1,7 @@
 "use strict";
 
 const DIRECT_MEDIA_EXTENSIONS = Object.freeze([
+  ".m3u8",
   ".mp4",
   ".webm",
   ".mov",
@@ -18,9 +19,11 @@ const DIRECT_MEDIA_EXTENSIONS = Object.freeze([
 const MEDIA_MIME_PREFIXES = Object.freeze(["video/", "audio/"]);
 const EXCLUDED_MIME_TYPES = Object.freeze([
   "video/mp2t",
+  "application/dash+xml",
+]);
+const HLS_MIME_TYPES = Object.freeze([
   "application/vnd.apple.mpegurl",
   "application/x-mpegurl",
-  "application/dash+xml",
 ]);
 
 function parseHttpUrl(value) {
@@ -73,10 +76,11 @@ function classifyMedia(url, contentType = "") {
   }
 
   const extension = extensionFromPath(parsed.pathname);
+  const hls = extension === ".m3u8" || HLS_MIME_TYPES.includes(mime);
   const directMime = MEDIA_MIME_PREFIXES.some((prefix) =>
     mime.startsWith(prefix),
   );
-  if (!extension && !directMime) {
+  if (!extension && !directMime && !hls) {
     return {
       allowed: false,
       reason: "The response is not a direct media file.",
@@ -86,8 +90,9 @@ function classifyMedia(url, contentType = "") {
   return {
     allowed: true,
     hostname: parsed.hostname,
-    extension,
-    mime: mime || "unknown",
+    extension: hls ? ".m3u8" : extension,
+    isHls: hls,
+    mime: mime || (hls ? "application/vnd.apple.mpegurl" : "unknown"),
     url: parsed.href,
   };
 }
