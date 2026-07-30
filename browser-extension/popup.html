@@ -53,6 +53,28 @@
         font-size: 12px;
         line-height: 1.5;
       }
+      form {
+        display: flex;
+        gap: 8px;
+        margin: 12px 0;
+      }
+      input {
+        min-width: 0;
+        flex: 1;
+        padding: 8px;
+        color: inherit;
+        border: 1px solid #604b54;
+        border-radius: 6px;
+        background: #171216;
+      }
+      button {
+        padding: 8px 12px;
+        color: #211b20;
+        border: 0;
+        border-radius: 6px;
+        background: #ef7f8a;
+        font-weight: 700;
+      }
     </style>
   </head>
   <body>
@@ -62,6 +84,15 @@
     <div id="status" class="status">
       <span class="dot"></span><span id="statusText">Checking…</span>
     </div>
+    <form id="pairForm">
+      <input
+        id="pairingCode"
+        inputmode="numeric"
+        maxlength="6"
+        placeholder="6-digit code"
+      />
+      <button type="submit">Pair</button>
+    </form>
     <p>Keep Media Scout open, then play a supported public video.</p>
     <script src="popup.js"></script>
   </body>

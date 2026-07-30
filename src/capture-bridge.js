@@ -81,10 +81,18 @@ function startCaptureBridge(
   const mediaProxies = new Map();
   const sockets = new Set();
   const proxyTtlMs = bridgeOptions.proxyTtlMs || PROXY_TTL_MS;
+  const pairingCode = String(bridgeOptions.pairingCode || "");
   let pairedOrigin = "";
-  const extensionAuthorized = (origin) => {
+  const extensionAuthorized = (origin, request) => {
     if (!isAllowedOrigin(origin)) return false;
-    if (!pairedOrigin) pairedOrigin = origin;
+    if (!pairedOrigin && !pairingCode) pairedOrigin = origin;
+    if (
+      !pairedOrigin &&
+      pairingCode &&
+      request?.headers["x-media-scout-pairing"] === pairingCode
+    ) {
+      pairedOrigin = origin;
+    }
     return origin === pairedOrigin;
   };
   const pruneMediaProxies = () => {
@@ -168,7 +176,7 @@ function startCaptureBridge(
     }
 
     if (request.method === "OPTIONS") {
-      if (!extensionAuthorized(origin)) {
+      if (!isAllowedOrigin(origin)) {
         json(response, 403, {
           ok: false,
           message: "Extension origin required.",
@@ -176,7 +184,7 @@ function startCaptureBridge(
         return;
       }
       response.writeHead(204, {
-        "Access-Control-Allow-Headers": "content-type",
+        "Access-Control-Allow-Headers": "content-type,x-media-scout-pairing",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Max-Age": "600",
@@ -190,14 +198,33 @@ function startCaptureBridge(
       json(
         response,
         200,
-        { ok: true, service: "Media Scout capture bridge" },
+        {
+          ok: true,
+          paired: Boolean(pairedOrigin && pairedOrigin === origin),
+          pairingRequired: Boolean(pairingCode),
+          service: "Media Scout capture bridge",
+        },
         origin,
       );
       return;
     }
 
+    if (request.method === "POST" && request.url === "/pair") {
+      if (!extensionAuthorized(origin, request)) {
+        json(
+          response,
+          403,
+          { ok: false, message: "Pairing code is incorrect." },
+          origin,
+        );
+        return;
+      }
+      json(response, 200, { ok: true, paired: true }, origin);
+      return;
+    }
+
     if (request.method === "GET" && request.url === "/commands") {
-      if (!extensionAuthorized(origin)) {
+      if (!extensionAuthorized(origin, request)) {
         json(response, 403, {
           ok: false,
           message: "Extension origin required.",
@@ -218,7 +245,7 @@ function startCaptureBridge(
       return;
     }
 
-    if (!extensionAuthorized(origin)) {
+    if (!extensionAuthorized(origin, request)) {
       json(response, 403, { ok: false, message: "Extension origin required." });
       return;
     }

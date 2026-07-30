@@ -1,4 +1,4 @@
-# Media Scout 0.2
+# Media Scout 0.3
 
 Media Scout is a Windows desktop MVP that resolves supported public post URLs into complete
 media files. It is intended for media the user owns, public-domain media, or sources whose
@@ -6,6 +6,16 @@ rights holder explicitly permits downloading.
 
 Detected files are deduplicated by host and path. Each result can be opened in an in-app
 audio/video preview before its link is copied or the file is saved.
+
+## Features
+
+- Two-slot download queue with cancellation, supported direct-download pausing, progress,
+  completion notifications, and persistent history.
+- Batch URL capture, optional clipboard suggestions, quality/codec/file-size preferences,
+  and audio-only YouTube downloads.
+- Secure six-digit pairing between the desktop app and browser companion.
+- Local diagnostics, sanitized rotating logs, incomplete-download cleanup, and privacy controls.
+- Packaged-build update checks backed by GitHub Releases.
 
 ## Safety boundaries
 
@@ -42,7 +52,8 @@ browser:
 2. Enable Developer mode.
 3. Choose **Load unpacked**.
 4. Select `C:\Projects\MediaScout\browser-extension`.
-5. Keep Media Scout open and play a supported public video.
+5. Open the companion popup and enter the six-digit code shown in Media Scout.
+6. Keep Media Scout open and play a supported public video.
 
 The companion sends the public page URL—not browser cookies or media fragments—to the local
 resolver. Complete results appear in the Capture shelf and Captures library. Private posts,
@@ -60,6 +71,17 @@ Remove-Item Env:MEDIA_SCOUT_RELEASE_CONFIRMED
 
 The installer is written to `dist`. Do not run the release command until automated
 verification and the interactive local test both pass.
+
+## Automated releases
+
+Pushing a version tag matching `package.json` (for example `v0.3.0`) runs verification,
+builds the NSIS installer, generates update metadata and SHA-256 checksums, creates GitHub
+build provenance attestations, and publishes a GitHub Release.
+
+For Authenticode signing, configure these GitHub Actions secrets:
+
+- `WINDOWS_CERTIFICATE`: base64-encoded `.pfx` certificate or a supported certificate URL.
+- `WINDOWS_CERTIFICATE_PASSWORD`: the certificate password.
 
 For Microsoft Store submission, package the tested application as MSIX or use the Store's
 supported Win32 installer submission path. Replace the placeholder app ID, author, branding,

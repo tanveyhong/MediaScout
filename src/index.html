@@ -76,6 +76,9 @@
         >
           <span class="nav-icon">⌂</span><span class="nav-label">Browser</span>
         </button>
+        <button class="nav-button" data-view="library" title="Download history">
+          <span class="nav-icon">▣</span><span class="nav-label">Library</span>
+        </button>
         <button class="nav-button" data-view="setup" title="Extension setup">
           <svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M8.5 3.5v4m7-4v4M5 9h14v3a7 7 0 0 1-14 0V9Zm7 10v2" />
@@ -94,6 +97,10 @@
         <button class="nav-button" data-view="settings" title="Settings">
           <span class="nav-icon">⚙</span><span class="nav-label">Settings</span>
         </button>
+        <button class="nav-button" data-view="diagnostics" title="Diagnostics">
+          <span class="nav-icon">◌</span
+          ><span class="nav-label">Diagnostics</span>
+        </button>
         <button class="nav-button nav-info" data-view="about" title="About">
           <span class="nav-icon">ⓘ</span><span class="nav-label">About</span>
         </button>
@@ -102,6 +109,26 @@
       <div class="workspace">
         <main id="browserView" class="app-view active">
           <aside class="results-panel">
+            <details class="batch-capture">
+              <summary>Batch capture or paste URLs</summary>
+              <textarea
+                id="batchUrls"
+                rows="3"
+                placeholder="Paste one supported public URL per line"
+              ></textarea>
+              <button id="batchCaptureButton" class="primary-button">
+                Resolve URLs
+              </button>
+            </details>
+            <div id="clipboardSuggestion" class="clipboard-suggestion" hidden>
+              <span id="clipboardSuggestionText"></span>
+              <button id="acceptClipboardButton" class="primary-button">
+                Resolve
+              </button>
+              <button id="dismissClipboardButton" class="quiet-button">
+                Dismiss
+              </button>
+            </div>
             <div class="results-heading">
               <div>
                 <span class="eyebrow">Capture shelf</span>
@@ -126,6 +153,37 @@
             <div id="resultsList" class="results-list" aria-live="polite"></div>
           </aside>
         </main>
+
+        <section id="libraryView" class="page-view app-view">
+          <header class="page-heading">
+            <div>
+              <span class="eyebrow">History</span>
+              <h2>Download library</h2>
+            </div>
+            <button id="clearHistoryButton" class="quiet-button">
+              Clear history
+            </button>
+          </header>
+          <input
+            id="historySearch"
+            type="search"
+            placeholder="Search title, source, or filename"
+          />
+          <div class="history-controls">
+            <select id="historyState">
+              <option value="">All states</option>
+              <option value="completed">Completed</option>
+              <option value="interrupted">Failed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <select id="historySort">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="largest">Largest first</option>
+            </select>
+          </div>
+          <div id="historyList" class="history-list"></div>
+        </section>
 
         <section id="settingsView" class="page-view app-view">
           <header class="page-heading">
@@ -170,6 +228,55 @@
                 >
               </div>
               <span class="chevron">›</span>
+            </article>
+            <article class="settings-card">
+              <div class="settings-card-icon">⚙</div>
+              <div class="preference-controls">
+                <h3>Capture preferences</h3>
+                <label
+                  ><input id="preferH264" type="checkbox" /> Prefer H.264
+                  video</label
+                >
+                <label
+                  ><input id="audioOnly" type="checkbox" /> Audio-only
+                  downloads</label
+                >
+                <label>
+                  Maximum quality
+                  <select id="maxHeight">
+                    <option value="0">Best available</option>
+                    <option value="2160">2160p</option>
+                    <option value="1440">1440p</option>
+                    <option value="1080">1080p</option>
+                    <option value="720">720p</option>
+                  </select>
+                </label>
+                <label>
+                  Maximum file size (MB, 0 for unlimited)
+                  <input id="maxFileSizeMb" type="number" min="0" step="50" />
+                </label>
+                <label
+                  ><input id="clipboardMonitoring" type="checkbox" /> Suggest
+                  supported clipboard URLs</label
+                >
+                <label
+                  ><input id="nativeNotifications" type="checkbox" /> Native
+                  completion notifications</label
+                >
+              </div>
+            </article>
+            <article class="settings-card">
+              <div class="settings-card-icon">⌫</div>
+              <div>
+                <h3>Privacy controls</h3>
+                <p>
+                  Clear local history, logs, detected links, cookies, and
+                  browser storage.
+                </p>
+                <button id="clearPrivateData" class="quiet-button">
+                  Clear local data
+                </button>
+              </div>
             </article>
           </div>
         </section>
@@ -261,6 +368,10 @@
                       </button>
                     </div>
                   </div>
+                  <p>
+                    Pairing code: <strong id="pairingCode">Loading…</strong>.
+                    Enter this code in the companion popup.
+                  </p>
                 </div>
               </article>
 
@@ -345,11 +456,41 @@
         <section id="aboutView" class="page-view app-view">
           <header class="page-heading">
             <div>
-              <span class="eyebrow">Version 0.2 development</span>
+              <span class="eyebrow">Version 0.3 development</span>
               <h2>About Media Scout</h2>
             </div>
             <p>A local-first workspace for authorized direct media.</p>
           </header>
+        </section>
+
+        <section id="diagnosticsView" class="page-view app-view">
+          <header class="page-heading">
+            <div>
+              <span class="eyebrow">System health</span>
+              <h2>Diagnostics</h2>
+            </div>
+            <button id="exportDiagnostics" class="primary-button">
+              Export report
+            </button>
+          </header>
+          <div id="diagnosticsContent" class="diagnostics-grid">Loading…</div>
+          <div class="update-controls">
+            <button id="checkForUpdates" class="quiet-button">
+              Check for updates
+            </button>
+            <button id="downloadUpdate" class="primary-button" hidden>
+              Download update
+            </button>
+            <button id="installUpdate" class="primary-button" hidden>
+              Restart and install
+            </button>
+            <span id="updateStatus"></span>
+          </div>
+          <p class="privacy-copy">
+            Media Scout resolves public page URLs locally. The companion sends
+            page URLs to the loopback bridge and does not import browser
+            cookies.
+          </p>
         </section>
       </div>
     </div>
@@ -381,6 +522,8 @@
               <span class="download-icon"></span
               ><span class="download-label">Save</span>
             </button>
+            <button class="cancel-download quiet-button" hidden>Cancel</button>
+            <button class="pause-download quiet-button" hidden>Pause</button>
           </div>
           <div class="download-feedback" aria-live="polite">
             <div class="download-feedback-row">
