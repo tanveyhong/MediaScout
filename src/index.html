@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data: https:; media-src http: https: blob: file:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Media Scout</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <img class="brand-mark" src="assets/media-scout-logo.png" alt="" />
+        <h1>Media Scout</h1>
+      </div>
+      <div class="titlebar-actions">
+        <button id="pinButton" class="pin-button" type="button" title="Keep Media Scout on top" aria-label="Keep Media Scout on top" aria-pressed="false">
+          <svg class="pin-symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 4h10M9 4v6l-3 3h12l-3-3V4M12 13v7" />
+          </svg>
+        </button>
+        <div class="window-controls" aria-label="Window controls">
+          <button id="minimizeWindow" class="window-control" type="button" title="Minimize" aria-label="Minimize">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5h10" /></svg>
+          </button>
+          <button id="maximizeWindow" class="window-control" type="button" title="Maximize" aria-label="Maximize">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" rx="1" /></svg>
+          </button>
+          <button id="closeWindow" class="window-control close" type="button" title="Close" aria-label="Close">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="app-shell">
+      <nav class="nav-rail" aria-label="Primary navigation">
+        <button class="nav-button active" data-view="browser" title="Captured media">
+          <span class="nav-icon">⌂</span><span class="nav-label">Browser</span>
+        </button>
+        <button class="nav-button obsolete-captures-button" data-view="captures" title="Captured media">
+          <span class="nav-icon">▣</span><span class="nav-label">Captures</span>
+          <span id="navCount" class="nav-count">0</span>
+        </button>
+        <button class="nav-button" data-view="setup" title="Extension setup">
+          <svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M8.5 3.5v4m7-4v4M5 9h14v3a7 7 0 0 1-14 0V9Zm7 10v2" />
+          </svg>
+          <span class="nav-label">Extension setup</span>
+        </button>
+        <button class="nav-button" data-view="supports" title="Supported sites">
+          <svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.5" />
+            <path d="M3.5 12h17M12 3.5c2.4 2.3 3.5 5.1 3.5 8.5S14.4 18.2 12 20.5C9.6 18.2 8.5 15.4 8.5 12S9.6 5.8 12 3.5Z" />
+          </svg>
+          <span class="nav-label">Supported sites</span>
+        </button>
+        <button class="nav-button" data-view="settings" title="Settings">
+          <span class="nav-icon">⚙</span><span class="nav-label">Settings</span>
+        </button>
+        <button class="nav-button nav-info" data-view="about" title="About">
+          <span class="nav-icon">ⓘ</span><span class="nav-label">About</span>
+        </button>
+      </nav>
+
+      <div class="workspace">
+        <section id="browserToolbar" class="toolbar removed-browser-ui" aria-label="Browser controls">
+          <button id="backButton" class="icon-button" title="Back" aria-label="Back">←</button>
+          <button id="forwardButton" class="icon-button" title="Forward" aria-label="Forward">→</button>
+          <button id="reloadButton" class="icon-button" title="Reload" aria-label="Reload">↻</button>
+          <form id="addressForm">
+            <input
+              id="addressInput"
+              type="url"
+              value=""
+              placeholder="Open an authorized website"
+              spellcheck="false"
+              aria-label="Website address"
+            />
+            <button type="submit" class="primary-button">Open</button>
+          </form>
+        </section>
+
+        <main id="browserView" class="app-view active">
+          <section class="browser-panel removed-browser-ui">
+            <webview
+              id="browser"
+              src="about:blank"
+              partition="persist:media-scout"
+              allowpopups
+            ></webview>
+          </section>
+
+          <aside class="results-panel">
+            <div class="results-heading">
+              <div>
+                <span class="eyebrow">Capture shelf</span>
+                <h2><span id="resultCount">0</span> unique files</h2>
+              </div>
+              <div class="results-heading-actions">
+                <button id="clearButton" class="quiet-button">Clear</button>
+              </div>
+            </div>
+            <div class="summary-strip">
+              <div><strong id="videoCount">0</strong><span>Video</span></div>
+              <div><strong id="audioCount">0</strong><span>Audio</span></div>
+              <div><strong id="totalSize">—</strong><span>Known size</span></div>
+            </div>
+            <div id="emptyState" class="empty-state">
+              <div class="radar"><span></span><span></span><span></span></div>
+              <h3>Waiting for media</h3>
+              <p>Play a supported public post in Opera GX, Edge, or Chrome.</p>
+            </div>
+            <div id="resultsList" class="results-list" aria-live="polite"></div>
+          </aside>
+        </main>
+
+        <section id="capturesView" class="page-view app-view removed-browser-ui">
+          <header class="page-heading">
+            <div><span class="eyebrow">Library</span><h2>Captured media</h2></div>
+            <p>Direct media detected by the built-in browser and browser companion.</p>
+          </header>
+          <div id="captureLibrary" class="library-grid"></div>
+        </section>
+
+        <section id="settingsView" class="page-view app-view">
+          <header class="page-heading">
+            <div><span class="eyebrow">Media Scout</span><h2>Settings</h2></div>
+            <p>Configure automatic browser playback capture.</p>
+          </header>
+          <div class="settings-grid">
+            <article class="settings-card download-location-card">
+              <div class="settings-card-icon">↓</div>
+              <div>
+                <h3>Download location</h3>
+                <p>Choose where saved media files are stored.</p>
+                <div class="folder-picker">
+                  <code id="downloadDirectory">Loading…</code>
+                  <button id="browseDownloadDirectory" class="primary-button">Browse</button>
+                </div>
+              </div>
+              <span class="chevron">›</span>
+            </article>
+            <article class="settings-card">
+              <div class="settings-card-icon">◉</div>
+              <div>
+                <h3>Browser companion</h3>
+                <p>Automatically detect direct media played in Edge or Chrome.</p>
+              </div>
+              <span class="chevron">›</span>
+            </article>
+            <article class="settings-card">
+              <div class="settings-card-icon">＋</div>
+              <div>
+                <h3>Install the development extension</h3>
+                <p>Load this folder as an unpacked extension:</p>
+                <code id="extensionPath">C:\Projects\MediaScout\browser-extension</code>
+              </div>
+              <span class="chevron">›</span>
+            </article>
+          </div>
+        </section>
+
+        <section id="setupView" class="page-view app-view setup-view">
+          <header class="page-heading setup-heading">
+            <div>
+              <span class="eyebrow">Browser companion</span>
+              <h2>Set up automatic detection</h2>
+            </div>
+            <p>Install the local extension once, then Media Scout can detect supported media as it plays in your browser.</p>
+          </header>
+
+          <div class="setup-layout">
+            <aside class="setup-progress" aria-label="Setup progress">
+              <span class="setup-kicker">About 2 minutes</span>
+              <h3>Before you begin</h3>
+              <p>Keep Media Scout open while installing and testing the companion.</p>
+            </aside>
+
+            <div class="walkthrough">
+              <article class="walkthrough-step">
+                <span class="step-number">1</span>
+                <div class="step-content">
+                  <span class="step-label">Open extensions</span>
+                  <h3>Go to your browser’s extension manager</h3>
+                  <div class="browser-addresses">
+                    <div><strong>Opera GX</strong><code>opera://extensions</code></div>
+                    <div><strong>Chrome</strong><code>chrome://extensions</code></div>
+                    <div><strong>Microsoft Edge</strong><code>edge://extensions</code></div>
+                  </div>
+                  <p>Paste the matching address into the browser address bar and press Enter.</p>
+                </div>
+              </article>
+
+              <article class="walkthrough-step">
+                <span class="step-number">2</span>
+                <div class="step-content">
+                  <span class="step-label">Enable installation</span>
+                  <h3>Turn on Developer mode</h3>
+                  <p>Use the Developer mode switch on the extensions page. In Opera GX it is located in the upper-right area.</p>
+                </div>
+              </article>
+
+              <article class="walkthrough-step">
+                <span class="step-number">3</span>
+                <div class="step-content">
+                  <span class="step-label">Choose the companion</span>
+                  <h3>Select “Load unpacked”</h3>
+                  <p>Choose the Media Scout extension folder shown below—not an individual file inside it.</p>
+                  <div class="extension-folder">
+                    <code id="guideExtensionPath">Loading…</code>
+                    <div class="extension-folder-actions">
+                      <button id="copyExtensionPath" class="quiet-button" type="button">Copy path</button>
+                      <button id="showExtensionFolder" class="primary-button" type="button">Open folder</button>
+                    </div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="walkthrough-step">
+                <span class="step-number">4</span>
+                <div class="step-content">
+                  <span class="step-label">Test detection</span>
+                  <h3>Play a supported public video</h3>
+                  <p>Leave Media Scout running, open Instagram or Bilibili in the browser, and play a public video. Its card should appear on the Capture Shelf automatically.</p>
+                  <div class="setup-checklist">
+                    <span>✓ Companion extension is enabled</span>
+                    <span>✓ Media Scout is open</span>
+                    <span>✓ Video is public and supported</span>
+                  </div>
+                </div>
+              </article>
+
+              <div class="setup-finish">
+                <div>
+                  <strong>Ready to test?</strong>
+                  <span>Return to the Capture Shelf and play some media.</span>
+                </div>
+                <button id="returnToCapture" class="primary-button" type="button">Open Capture Shelf</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="supportsView" class="page-view app-view supports-view">
+          <header class="page-heading supports-heading">
+            <div>
+              <span class="eyebrow">Compatibility</span>
+              <h2>Supported sites</h2>
+            </div>
+            <p>Media Scout currently detects public videos from these platforms through the browser companion.</p>
+          </header>
+
+          <div class="support-grid">
+            <article class="support-card instagram">
+              <div class="platform-thumbnail">
+                <img src="../assets/instagram.ico" alt="" />
+              </div>
+              <h3>Instagram</h3>
+            </article>
+
+            <article class="support-card youtube">
+              <div class="platform-thumbnail">
+                <img src="../assets/youtube.svg" alt="" />
+              </div>
+              <h3>YouTube</h3>
+            </article>
+
+            <article class="support-card bilibili">
+              <div class="platform-thumbnail">
+                <img src="../assets/bilibili.ico" alt="" />
+              </div>
+              <h3>Bilibili</h3>
+            </article>
+
+            <article class="support-card douyin">
+              <div class="platform-thumbnail">
+                <img src="../assets/douyin.ico" alt="" />
+              </div>
+              <h3>Douyin</h3>
+            </article>
+          </div>
+
+        </section>
+
+        <section id="aboutView" class="page-view app-view">
+          <header class="page-heading">
+            <div><span class="eyebrow">Version 0.2 development</span><h2>About Media Scout</h2></div>
+            <p>A local-first workspace for authorized direct media.</p>
+          </header>
+        </section>
+      </div>
+    </div>
+    <div id="toast" class="toast" role="status"></div>
+
+    <template id="resultTemplate">
+      <article class="media-card">
+        <button class="preview-tile" aria-label="Preview detected media">
+          <img class="media-thumbnail" alt="" loading="lazy" />
+          <span class="play-symbol">▶</span><span class="audio-symbol">♪</span>
+        </button>
+        <div class="media-content">
+          <div class="media-card-top">
+            <span class="media-type"></span><span class="media-time"></span>
+          </div>
+          <strong class="media-host"></strong>
+          <div class="media-meta">
+            <span class="media-size"></span><span class="media-source"></span>
+          </div>
+          <label class="quality-control">
+            <span>Quality</span>
+            <select class="quality-select" aria-label="Choose media quality"></select>
+          </label>
+          <div class="media-actions">
+            <button class="download-button primary-button">
+              <span class="download-icon"></span><span class="download-label">Save</span>
+            </button>
+          </div>
+          <div class="download-feedback" aria-live="polite">
+            <div class="download-feedback-row">
+              <span class="download-status-label">Preparing…</span>
+              <span class="download-percent"></span>
+            </div>
+            <div class="download-track"><span class="download-fill"></span></div>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <dialog id="previewDialog" class="preview-dialog">
+      <div class="preview-shell">
+        <header>
+          <div><span class="eyebrow">Preview</span><h2 id="previewTitle">Detected media</h2></div>
+          <button id="closePreviewButton" class="icon-button" aria-label="Close preview">×</button>
+        </header>
+        <div class="preview-stage">
+          <video id="videoPreview" controls playsinline></video>
+          <div id="audioPreviewWrap" class="audio-preview">
+            <div class="audio-art">♪</div><audio id="audioPreview" controls></audio>
+          </div>
+          <div id="previewError" class="preview-error">
+            This source cannot be previewed directly. It may require page-specific authorization,
+            but you can still copy its link.
+          </div>
+        </div>
+        <footer>
+          <div class="preview-details">
+            <strong id="previewHost"></strong><span id="previewMeta"></span>
+          </div>
+          <div class="preview-actions">
+            <button id="previewDownloadButton" class="primary-button">Save media</button>
+          </div>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog id="rightsDialog" class="rights-dialog">
+      <div class="rights-illustration"><span>✓</span></div>
+      <span class="eyebrow">One-time confirmation</span>
+      <h2>Download responsibly</h2>
+      <p>
+        Confirm that you will only save media you own, public-domain media, or content
+        the rights holder permits you to download.
+      </p>
+      <div class="rights-note">
+        Media Scout will remember this choice and will not ask again on future downloads.
+      </div>
+      <div class="rights-actions">
+        <button id="cancelRightsButton" class="quiet-button">Cancel</button>
+        <button id="confirmRightsButton" class="primary-button">I understand · Download</button>
+      </div>
+    </dialog>
+    <script src="renderer.js"></script>
+  </body>
+</html>
