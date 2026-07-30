@@ -180,8 +180,9 @@ test("uses Internet Archive metadata for public media files", async () => {
     },
   );
   assert.equal(result.ok, true);
-  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates.length, 2);
   assert.match(result.candidates[0], /movie\.mp4$/);
+  assert.match(result.candidates[1], /playlist\.m3u8$/);
   assert.equal(result.title, "Public sample");
 });
 

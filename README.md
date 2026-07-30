@@ -27,7 +27,8 @@ audio/video preview before its link is copied or the file is saved.
 ## Safety boundaries
 
 - Public YouTube watch, Shorts, and `youtu.be` URLs are supported without bypassing access controls.
-- Adaptive playlists and segmented streaming formats such as HLS and DASH are excluded.
+- HLS (`.m3u8`) playlists can be assembled and saved as MP4. DASH manifests and
+  individual transport-stream fragments remain excluded.
 - The app is designed for public URLs and does not intentionally bypass DRM, encryption,
   authentication, paywalls, or access controls.
 - Every download requires a rights confirmation.
@@ -72,7 +73,7 @@ Paste or batch-resolve complete HTTP(S) media URLs directly. Internet Archive it
 Wikimedia pages are recognized as public-content providers. For a site you own, add its
 hostname under **Settings → Authorized domains you control**; Media Scout will only read
 complete media URLs exposed in standard page metadata. This generic adapter does not run the
-broad extractor and does not accept HLS, DASH, DRM, login-only, or encrypted streams.
+broad extractor and does not accept DASH, DRM, login-only, or encrypted streams.
 
 ## Confirmed Windows release
 
