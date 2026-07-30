@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Media Scout Companion",
-  "version": "0.7.0",
-  "description": "Resolve supported public Instagram, YouTube, Bilibili, and Douyin videos through Media Scout.",
+  "version": "0.7.1",
+  "description": "Resolve supported public Instagram, YouTube, Bilibili, Douyin, and Re:ANIME videos through Media Scout.",
   "permissions": ["storage", "tabs", "webRequest"],
   "host_permissions": [
     "https://*.instagram.com/*",
@@ -18,6 +18,10 @@
     "https://*.pstatp.com/*",
     "https://*.volccdn.com/*",
     "https://*.zjcdn.com/*",
+    "https://reanime.to/*",
+    "https://*.reanime.to/*",
+    "https://flixcloud.cc/*",
+    "https://*.flixcloud.cc/*",
     "http://127.0.0.1:48731/*"
   ],
   "background": {
@@ -25,15 +29,27 @@
   },
   "content_scripts": [
     {
+      "matches": ["https://flixcloud.cc/*", "https://*.flixcloud.cc/*"],
+      "js": ["player-hook.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
       "matches": [
         "https://*.instagram.com/*",
         "https://*.youtube.com/*",
         "https://youtu.be/*",
         "https://*.bilibili.com/*",
-        "https://*.douyin.com/*"
+        "https://*.douyin.com/*",
+        "https://reanime.to/*",
+        "https://*.reanime.to/*",
+        "https://flixcloud.cc/*",
+        "https://*.flixcloud.cc/*"
       ],
       "js": ["content-script.js"],
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "action": {

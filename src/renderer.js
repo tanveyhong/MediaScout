@@ -157,11 +157,20 @@ async function requestDownload(media, setDownloadState = () => {}) {
     return;
   }
   setDownloadState({ mode: "preparing" });
+  const subtitle =
+    media.subtitles?.find((track) => track.default) ||
+    media.subtitles?.find(
+      (track) =>
+        /^English\b/i.test(track.language || "") &&
+        !/Forced/i.test(track.language || ""),
+    ) ||
+    media.subtitles?.[0];
   const result = await window.mediaScout.downloadMedia(
     media.url,
     media.analysis?.audioUrl || "",
     media.title || "",
     media.pageUrl || "",
+    subtitle?.url || "",
   );
   if (result.needsPermission) {
     pendingRightsDownload = { media, setDownloadState };
@@ -361,6 +370,7 @@ function closePreview() {
   videoPreview.pause();
   audioPreview.pause();
   videoPreview.removeAttribute("src");
+  videoPreview.querySelectorAll("track").forEach((track) => track.remove());
   audioPreview.removeAttribute("src");
   videoPreview.load();
   audioPreview.load();
@@ -385,9 +395,35 @@ function openPreview(media) {
   audioPreviewWrap.style.display = isAudio ? "flex" : "none";
 
   const player = isAudio ? audioPreview : videoPreview;
+  const subtitle =
+    media.subtitles?.find((track) => track.default) ||
+    media.subtitles?.find(
+      (track) =>
+        /^English\b/i.test(track.language || "") &&
+        !/Forced/i.test(track.language || ""),
+    ) ||
+    media.subtitles?.[0];
+  videoPreview.querySelectorAll("track").forEach((track) => track.remove());
+  if (!isAudio && subtitle?.url) {
+    const track = document.createElement("track");
+    track.kind = "subtitles";
+    track.label = subtitle.language || "Subtitle";
+    track.srclang = /^English\b/i.test(track.label) ? "en" : "und";
+    track.src = subtitle.url;
+    track.default = true;
+    videoPreview.append(track);
+  }
   previewDialog.showModal();
   const videoCodec = media.analysis?.videoCodec || "";
-  if (!isAudio && videoCodec && !/^(?:h264|avc)/i.test(videoCodec)) {
+  const isHls =
+    media.extension === ".m3u8" ||
+    ["application/vnd.apple.mpegurl", "application/x-mpegurl"].includes(
+      media.mime,
+    );
+  if (
+    !isAudio &&
+    (isHls || (videoCodec && !/^(?:h264|avc)/i.test(videoCodec)))
+  ) {
     previewCompatibilityAttempted = true;
     videoPreview.style.display = "none";
     previewError.textContent = "Loading preview…";

@@ -61,6 +61,15 @@ function recentMediaCandidates(tabId, fallback = "") {
     .slice(0, 4);
 }
 
+function combinedMediaCandidates(tabId, payload = {}) {
+  return [
+    ...(Array.isArray(payload.mediaCandidates) ? payload.mediaCandidates : []),
+    ...(recentMediaByTab.get(tabId) || []).map((entry) => entry.url),
+  ]
+    .filter((url, index, all) => url && index === all.indexOf(url))
+    .slice(0, 16);
+}
+
 function preferredMediaUrl(tabId, fallback = "") {
   return recentMediaCandidates(tabId, fallback)[0] || fallback;
 }
@@ -68,6 +77,14 @@ function preferredMediaUrl(tabId, fallback = "") {
 function looksLikeDouyinPageUrl(url) {
   try {
     return /(?:^|\.)douyin\.com$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function looksLikeReanimePageUrl(url) {
+  try {
+    return /(?:^|\.)reanime\.to$/i.test(new URL(url).hostname);
   } catch {
     return false;
   }
@@ -161,7 +178,9 @@ function supportedPage(url) {
         ((parsed.pathname === "/watch" &&
           /^[A-Za-z0-9_-]{11}$/.test(parsed.searchParams.get("v") || "")) ||
           /^\/shorts\/[A-Za-z0-9_-]{11}\/?$/.test(parsed.pathname))) ||
-      (host === "youtu.be" && /^\/[A-Za-z0-9_-]{11}\/?$/.test(parsed.pathname))
+      (host === "youtu.be" &&
+        /^\/[A-Za-z0-9_-]{11}\/?$/.test(parsed.pathname)) ||
+      looksLikeReanimePageUrl(url)
     );
   } catch {
     return false;
@@ -193,6 +212,7 @@ async function resolvePage(pageUrl, media = {}) {
       method: "POST",
       headers: await bridgeHeaders(true),
       body: JSON.stringify({
+        manifestText: media.manifestText || "",
         mediaUrl: media.mediaUrl || "",
         mediaCandidates:
           media.mediaCandidates ||
@@ -220,9 +240,7 @@ async function resolvePage(pageUrl, media = {}) {
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== "media-played") return;
   const networkMedia = preferredMediaUrl(sender.tab?.id, message.mediaUrl);
-  const allCandidates = (recentMediaByTab.get(sender.tab?.id) || [])
-    .map((entry) => entry.url)
-    .slice(0, 16);
+  const allCandidates = combinedMediaCandidates(sender.tab?.id, message);
   (async () => {
     const resolved = await resolvePage(
       sender.tab?.url || message.pageUrl || "",
@@ -270,9 +288,7 @@ async function tryPendingShareTab(tabId) {
     .sendMessage(tabId, { type: "capture-now" })
     .catch(() => ({}));
   const networkMedia = preferredMediaUrl(tabId, payload?.mediaUrl);
-  const allCandidates = (recentMediaByTab.get(tabId) || [])
-    .map((entry) => entry.url)
-    .slice(0, 16);
+  const allCandidates = combinedMediaCandidates(tabId, payload);
   if (networkMedia) {
     const resolved = await resolvePage(tab.url || payload?.pageUrl || "", {
       ...payload,
@@ -296,9 +312,7 @@ async function captureSupportedTab(tabId, tabUrl = "") {
     .sendMessage(tab.id, { type: "capture-now" })
     .catch(() => ({}));
   const networkMedia = preferredMediaUrl(tab.id, payload?.mediaUrl);
-  const allCandidates = (recentMediaByTab.get(tab.id) || [])
-    .map((entry) => entry.url)
-    .slice(0, 16);
+  const allCandidates = combinedMediaCandidates(tab.id, payload);
   await resolvePage(tab.url || payload?.pageUrl || "", {
     ...payload,
     mediaCandidates: allCandidates,
@@ -348,9 +362,7 @@ async function pollCommands() {
               .sendMessage(tab.id, { type: "capture-now" })
               .catch(() => ({}));
             const networkMedia = preferredMediaUrl(tab.id, payload?.mediaUrl);
-            const allCandidates = (recentMediaByTab.get(tab.id) || [])
-              .map((entry) => entry.url)
-              .slice(0, 16);
+            const allCandidates = combinedMediaCandidates(tab.id, payload);
             await resolvePage(tab.url || payload?.pageUrl || "", {
               ...payload,
               mediaCandidates: allCandidates,

@@ -22,8 +22,15 @@ contextBridge.exposeInMainWorld("mediaScout", {
   validateNavigation: (url) => ipcRenderer.invoke("navigation:validate", url),
   resolvePage: (url) => ipcRenderer.invoke("page:resolve", url),
   copyMedia: (url) => ipcRenderer.invoke("media:copy", url),
-  downloadMedia: (url, audioUrl, title, pageUrl) =>
-    ipcRenderer.invoke("media:download", url, audioUrl, title, pageUrl),
+  downloadMedia: (url, audioUrl, title, pageUrl, subtitleUrl) =>
+    ipcRenderer.invoke(
+      "media:download",
+      url,
+      audioUrl,
+      title,
+      pageUrl,
+      subtitleUrl,
+    ),
   cancelDownload: (url) => ipcRenderer.invoke("media:cancel", url),
   togglePauseDownload: (url) => ipcRenderer.invoke("media:toggle-pause", url),
   prepareCompatiblePreview: (url, audioUrl) =>

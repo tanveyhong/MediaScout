@@ -23,6 +23,26 @@ test("recognizes direct media and trusted public-content providers", () => {
   );
 });
 
+test("recognizes only supported nnyy.in movie pages", () => {
+  assert.deepEqual(
+    genericProviderFor(
+      "https://www.nnyy.in/dianying/20168832.html?source=test",
+    ),
+    {
+      id: "nnyy",
+      url: "https://nnyy.in/dianying/20168832.html",
+    },
+  );
+  assert.equal(
+    genericProviderFor("https://nnyy.in/dianying/not-a-movie"),
+    null,
+  );
+  assert.equal(
+    genericProviderFor("https://example.com/dianying/20168832.html"),
+    null,
+  );
+});
+
 test("limits generic pages to normalized user-authorized domains", () => {
   const domains = normalizeDomainList(
     "https://media.example.org/path, assets.example.net",

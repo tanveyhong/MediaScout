@@ -292,7 +292,12 @@ function downloadTask(descriptor) {
   }
   if (descriptor.type === "hls") {
     return () =>
-      downloadHlsPlaylist(descriptor.url, descriptor.title, descriptor.pageUrl);
+      downloadHlsPlaylist(
+        descriptor.url,
+        descriptor.title,
+        descriptor.pageUrl,
+        descriptor.subtitleUrl,
+      );
   }
   return () =>
     new Promise((resolve) => {
@@ -587,7 +592,7 @@ function mergeMediaDownload(videoUrl, audioUrl, title = "", pageUrl = "") {
   });
 }
 
-function downloadHlsPlaylist(url, title = "", pageUrl = "") {
+function downloadHlsPlaylist(url, title = "", pageUrl = "", subtitleUrl = "") {
   const outputPath = availableDownloadPath(
     downloadFilename(title, ".mp4", pageUrl),
   );
@@ -597,18 +602,36 @@ function downloadHlsPlaylist(url, title = "", pageUrl = "") {
   send("download:started", { filename, url });
   return new Promise((resolve) => {
     let settled = false;
+    const sourceHost = new URL(url).hostname;
+    const flixCloudHeaders = /(?:^|\.)flixcloud\.cc$/i.test(sourceHost)
+      ? [
+          "-headers",
+          "Accept: */*\r\n" +
+            "Origin: https://flixcloud.cc\r\n" +
+            "Referer: https://flixcloud.cc/\r\n" +
+            "Sec-Fetch-Dest: empty\r\n" +
+            "Sec-Fetch-Mode: cors\r\n" +
+            "Sec-Fetch-Site: same-site\r\n" +
+            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36\r\n",
+        ]
+      : [];
     const child = trackedSpawn(
       ffmpegPath,
       [
         "-y",
+        ...flixCloudHeaders,
         "-i",
         url,
+        ...(subtitleUrl ? ["-i", subtitleUrl] : []),
         "-map",
         "0:v?",
         "-map",
         "0:a?",
+        ...(subtitleUrl ? ["-map", "1:0?"] : []),
         "-c",
         "copy",
+        ...(subtitleUrl ? ["-c:s", "mov_text"] : []),
         "-bsf:a",
         "aac_adtstoasc",
         "-movflags",
@@ -619,6 +642,10 @@ function downloadHlsPlaylist(url, title = "", pageUrl = "") {
       ],
       { windowsHide: true },
     );
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      if (stderr.length < 8_000) stderr += chunk.toString();
+    });
     activeDownloadHandles.set(url, child);
     send("download:progress", {
       percent: 0,
@@ -655,6 +682,11 @@ function downloadHlsPlaylist(url, title = "", pageUrl = "") {
     });
     child.once("exit", (code) => {
       if (code !== 0 || !fs.existsSync(temporaryPath)) {
+        appData?.log("error", "hls-download-failed", {
+          pageUrl,
+          stderr: stderr.slice(-4_000),
+          url,
+        });
         fs.rmSync(temporaryPath, { force: true });
         finish("interrupted");
         return;
@@ -878,6 +910,8 @@ function transcodePreview(url, audioUrl = "") {
         "aac",
         "-b:a",
         "160k",
+        "-t",
+        "60",
         "-movflags",
         "+faststart",
         "-f",
@@ -955,6 +989,9 @@ function addDetectedMedia(media) {
     detectedHlsUrls.add(media.url);
   }
   if (media.analysis?.audioUrl) detectedUrls.add(media.analysis.audioUrl);
+  for (const subtitle of media.subtitles || []) {
+    if (subtitle.url) detectedUrls.add(subtitle.url);
+  }
   for (const variant of media.variants || []) {
     if (variant.url) detectedUrls.add(variant.url);
   }
@@ -1122,7 +1159,10 @@ function launchCaptureBridge() {
         dispose: () => douyinSession.dispose(),
       };
     },
-    { pairingCode },
+    {
+      log: (...args) => appData?.log(...args),
+      pairingCode,
+    },
   );
   captureBridge.once("error", () => {
     captureBridge = null;
@@ -1498,9 +1538,17 @@ ipcMain.handle("media:copy", (_event, url) => {
 
 ipcMain.handle(
   "media:download",
-  async (_event, url, audioUrl = "", title = "", pageUrl = "") => {
+  async (
+    _event,
+    url,
+    audioUrl = "",
+    title = "",
+    pageUrl = "",
+    subtitleUrl = "",
+  ) => {
     const parsed = parseHttpUrl(url);
     const parsedAudio = audioUrl ? parseHttpUrl(audioUrl) : null;
+    const parsedSubtitle = subtitleUrl ? parseHttpUrl(subtitleUrl) : null;
     if (!parsed || !detectedUrls.has(parsed.href)) {
       return {
         ok: false,
@@ -1509,6 +1557,12 @@ ipcMain.handle(
     }
     if (audioUrl && (!parsedAudio || !detectedUrls.has(parsedAudio.href))) {
       return { ok: false, message: "The detected audio track is unavailable." };
+    }
+    if (
+      subtitleUrl &&
+      (!parsedSubtitle || !detectedUrls.has(parsedSubtitle.href))
+    ) {
+      return { ok: false, message: "The detected subtitle is unavailable." };
     }
 
     if (!downloadRightsConfirmed) {
@@ -1550,6 +1604,7 @@ ipcMain.handle(
       const descriptor = {
         audioUrl: parsedAudio.href,
         pageUrl,
+        subtitleUrl: parsedSubtitle?.href || "",
         title,
         type: "merge",
         url: parsed.href,
@@ -1564,6 +1619,7 @@ ipcMain.handle(
       const descriptor = {
         audioUrl: "",
         pageUrl,
+        subtitleUrl: parsedSubtitle?.href || "",
         title,
         type: "hls",
         url: parsed.href,
