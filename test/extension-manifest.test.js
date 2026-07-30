@@ -47,3 +47,18 @@ test("desktop pairing is persisted with Electron safe storage", () => {
   assert.match(mainSource, /safeStorage\.decryptString\(/);
   assert.doesNotMatch(mainSource, /pairingCode:\s*pairingCode/);
 });
+
+test("the desktop window uses the packaged Media Scout icon", () => {
+  const mainSource = fs.readFileSync(
+    path.join(__dirname, "..", "src", "main.js"),
+    "utf8",
+  );
+  assert.match(
+    mainSource,
+    /icon:\s*path\.resolve\(__dirname,\s*"\.\.",\s*"assets",\s*"media-scout\.ico"\)/,
+  );
+  assert.doesNotMatch(
+    mainSource,
+    /path\.join\(__dirname,\s*"assets",\s*"media-scout-logo\.png"\)/,
+  );
+});
