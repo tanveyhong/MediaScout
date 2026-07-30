@@ -1183,7 +1183,7 @@ function createWindow() {
     maximizable: true,
     fullscreenable: true,
     title: "Media Scout",
-    icon: path.join(__dirname, "assets", "media-scout-logo.png"),
+    icon: path.resolve(__dirname, "..", "assets", "media-scout.ico"),
     backgroundColor: "#171316",
     frame: false,
     webPreferences: {

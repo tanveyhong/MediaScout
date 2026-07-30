@@ -12,3 +12,18 @@ test("maps external binaries out of Electron's virtual ASAR directory", () => {
     "C:\\Program Files\\Media Scout\\resources\\app.asar.unpacked\\node_modules\\ffmpeg-static\\ffmpeg.exe",
   );
 });
+
+test("maps pnpm binary paths to Electron Builder's flattened unpacked layout", () => {
+  assert.equal(
+    unpackedBinaryPath(
+      "C:\\Program Files\\Media Scout\\resources\\app.asar\\node_modules\\.pnpm\\ffmpeg-static@5.3.0\\node_modules\\ffmpeg-static\\ffmpeg.exe",
+    ),
+    "C:\\Program Files\\Media Scout\\resources\\app.asar.unpacked\\node_modules\\ffmpeg-static\\ffmpeg.exe",
+  );
+  assert.equal(
+    unpackedBinaryPath(
+      "C:\\Program Files\\Media Scout\\resources\\app.asar\\node_modules\\.pnpm\\@distube+yt-dlp@2.0.1\\node_modules\\@distube\\yt-dlp\\bin\\yt-dlp.exe",
+    ),
+    "C:\\Program Files\\Media Scout\\resources\\app.asar.unpacked\\node_modules\\@distube\\yt-dlp\\bin\\yt-dlp.exe",
+  );
+});
