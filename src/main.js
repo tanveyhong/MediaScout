@@ -14,6 +14,7 @@ const {
   dialog,
   ipcMain,
   Notification,
+  safeStorage,
   session,
   shell,
 } = require("electron");
@@ -29,7 +30,8 @@ const { DEFAULT_BRIDGE_PORT, startCaptureBridge } = require("./capture-bridge");
 
 const MEDIA_PARTITION = "persist:media-scout";
 const DEFAULT_START_URL = "https://archive.org/";
-const pairingCode = crypto.randomInt(100_000, 1_000_000).toString();
+let pairingCode = "";
+let encryptedPairingCode = "";
 let mainWindow;
 let captureBridge;
 let captureBridgeRetryTimer;
@@ -84,8 +86,9 @@ function extensionDirectory() {
 
 function loadSettings() {
   downloadDirectory = app.getPath("downloads");
+  let settings = {};
   try {
-    const settings = JSON.parse(fs.readFileSync(settingsPath(), "utf8"));
+    settings = JSON.parse(fs.readFileSync(settingsPath(), "utf8"));
     if (
       typeof settings.downloadDirectory === "string" &&
       fs.existsSync(settings.downloadDirectory)
@@ -97,6 +100,26 @@ function loadSettings() {
   } catch {
     // First launch or an unreadable settings file falls back to Downloads.
   }
+  if (
+    safeStorage.isEncryptionAvailable() &&
+    typeof settings.encryptedPairingCode === "string"
+  ) {
+    try {
+      const savedCode = safeStorage.decryptString(
+        Buffer.from(settings.encryptedPairingCode, "base64"),
+      );
+      if (/^\d{6}$/.test(savedCode)) pairingCode = savedCode;
+    } catch {
+      // A credential from another OS account or installation is replaced below.
+    }
+  }
+  if (!pairingCode) {
+    pairingCode = crypto.randomInt(100_000, 1_000_000).toString();
+  }
+  encryptedPairingCode = safeStorage.isEncryptionAvailable()
+    ? safeStorage.encryptString(pairingCode).toString("base64")
+    : "";
+  saveSettings();
 }
 
 function saveSettings() {
@@ -108,6 +131,7 @@ function saveSettings() {
         alwaysOnTop,
         downloadDirectory,
         downloadRightsConfirmed: false,
+        encryptedPairingCode,
         preferences,
       },
       null,

@@ -195,6 +195,7 @@ function startCaptureBridge(
     }
 
     if (request.method === "GET" && request.url === "/status") {
+      extensionAuthorized(origin, request);
       json(
         response,
         200,

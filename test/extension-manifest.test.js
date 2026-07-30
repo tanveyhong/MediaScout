@@ -27,3 +27,13 @@ test("extension access is limited to supported sites and the local bridge", () =
 test("packaged builds expose the companion outside the ASAR archive", () => {
   assert.ok(packageJson.build.asarUnpack.includes("browser-extension/**/*"));
 });
+
+test("desktop pairing is persisted with Electron safe storage", () => {
+  const mainSource = fs.readFileSync(
+    path.join(__dirname, "..", "src", "main.js"),
+    "utf8",
+  );
+  assert.match(mainSource, /safeStorage\.encryptString\(pairingCode\)/);
+  assert.match(mainSource, /safeStorage\.decryptString\(/);
+  assert.doesNotMatch(mainSource, /pairingCode:\s*pairingCode/);
+});
