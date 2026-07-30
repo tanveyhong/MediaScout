@@ -3,7 +3,8 @@
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { unpackedBinaryPath } = require("./binary-path");
-const { parseHttpUrl } = require("./policy");
+const { classifyMedia, parseHttpUrl } = require("./policy");
+const { genericProviderFor } = require("./provider-registry");
 
 const YT_DLP_PATH = unpackedBinaryPath(
   path.join(
@@ -81,7 +82,7 @@ function decodeJsonUrl(value) {
   }
 }
 
-function normalizePublicPage(rawUrl) {
+function normalizePublicPage(rawUrl, options = {}) {
   const parsed = parseHttpUrl(rawUrl);
   if (!parsed) return null;
   const host = parsed.hostname.toLowerCase();
@@ -102,8 +103,9 @@ function normalizePublicPage(rawUrl) {
           ? parsed.pathname.split("/").filter(Boolean)[0]
           : "") || "";
   const youtube = YOUTUBE_VIDEO_ID.test(youtubeId);
-  if (!instagram && !bilibili && !douyin && !douyinShort && !youtube)
-    return null;
+  if (!instagram && !bilibili && !douyin && !douyinShort && !youtube) {
+    return genericProviderFor(rawUrl, options.authorizedDomains)?.url || null;
+  }
   if (youtube) {
     return `https://www.youtube.com/watch?v=${youtubeId}`;
   }
@@ -116,11 +118,13 @@ function normalizePublicPage(rawUrl) {
   return parsed.href;
 }
 
-function extractCandidates(html) {
+function extractCandidates(html, baseUrl = "") {
   const found = new Set();
   const metaPatterns = [
     /<meta[^>]+property=["']og:video(?::secure_url)?["'][^>]+content=["']([^"']+)["']/gi,
     /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:video(?::secure_url)?["']/gi,
+    /<meta[^>]+property=["']og:audio(?::secure_url)?["'][^>]+content=["']([^"']+)["']/gi,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:audio(?::secure_url)?["']/gi,
   ];
   for (const pattern of metaPatterns) {
     for (const match of html.matchAll(pattern)) found.add(decodeHtml(match[1]));
@@ -130,10 +134,20 @@ function extractCandidates(html) {
   )) {
     found.add(decodeJsonUrl(match[1]));
   }
-  return [...found].filter((candidate) => {
-    const parsed = parseHttpUrl(candidate);
-    return parsed && /\.mp4$/i.test(parsed.pathname);
-  });
+  for (const match of html.matchAll(
+    /<(?:video|audio|source)[^>]+src=["']([^"']+)["']/gi,
+  )) {
+    found.add(decodeHtml(match[1]));
+  }
+  return [...found]
+    .map((candidate) => {
+      try {
+        return new URL(candidate, baseUrl || undefined).href;
+      } catch {
+        return "";
+      }
+    })
+    .filter((candidate) => classifyMedia(candidate).allowed);
 }
 
 function extractPageMetadata(html) {
@@ -159,17 +173,32 @@ function extractPageMetadata(html) {
 }
 
 async function resolvePublicPage(rawUrl, options = {}) {
-  const pageUrl = normalizePublicPage(rawUrl);
+  const genericProvider = genericProviderFor(rawUrl, options.authorizedDomains);
+  const pageUrl = normalizePublicPage(rawUrl, options);
   if (!pageUrl) {
     return {
       ok: false,
       reason:
-        "Only supported public Instagram, YouTube, Bilibili, and Douyin video URLs are accepted.",
+        "Use a supported provider, a complete direct media URL, a public-domain source, or an explicitly authorized domain.",
     };
   }
 
   const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (genericProvider?.id === "direct-media") {
+    return resolveDirectMedia(pageUrl, fetchImpl);
+  }
   const pageHost = new URL(pageUrl).hostname;
+  if (
+    genericProvider?.id === "public-content" &&
+    /(?:^|\.)archive\.org$/i.test(pageHost)
+  ) {
+    const identifier = new URL(pageUrl).pathname.match(
+      /^\/(?:details|download)\/([^/]+)/,
+    )?.[1];
+    if (identifier) {
+      return resolveInternetArchive(pageUrl, identifier, fetchImpl);
+    }
+  }
   if (pageHost.endsWith("youtube.com")) {
     return resolveExtractorPage(pageUrl, options.extractor || ytDlpJson);
   }
@@ -200,8 +229,8 @@ async function resolvePublicPage(rawUrl, options = {}) {
     return { ok: false, reason: "This post requires login or is not public." };
   }
   const metadata = extractPageMetadata(html);
-  let candidates = extractCandidates(html);
-  if (!candidates.length && options.extractor !== false) {
+  let candidates = extractCandidates(html, pageUrl);
+  if (!candidates.length && !genericProvider && options.extractor !== false) {
     try {
       const info = await (options.extractor || ytDlpJson)(
         pageUrl,
@@ -246,7 +275,92 @@ async function resolvePublicPage(rawUrl, options = {}) {
       reason: "The public page did not expose a complete playable MP4.",
     };
   }
-  return { candidates, ok: true, pageUrl, ...metadata };
+  return {
+    candidates,
+    ok: true,
+    pageUrl,
+    provider: genericProvider?.id || "built-in",
+    ...metadata,
+  };
+}
+
+async function resolveDirectMedia(url, fetchImpl) {
+  let contentType = "";
+  let size = 0;
+  try {
+    const response = await fetchImpl(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) {
+      return {
+        ok: false,
+        reason: `The direct media server returned HTTP ${response.status}.`,
+      };
+    }
+    contentType = response.headers?.get?.("content-type") || "";
+    size = Number(response.headers?.get?.("content-length")) || 0;
+  } catch {
+    // File extensions remain sufficient when a server does not implement HEAD.
+  }
+  const media = classifyMedia(url, contentType);
+  if (!media.allowed) return { ok: false, reason: media.reason };
+  return {
+    candidateSizes: { [url]: size },
+    candidateTypes: { [url]: contentType },
+    candidates: [url],
+    ok: true,
+    pageUrl: url,
+    provider: "direct-media",
+    title: decodeURIComponent(path.basename(new URL(url).pathname)),
+  };
+}
+
+async function resolveInternetArchive(pageUrl, identifier, fetchImpl) {
+  const response = await fetchImpl(
+    `https://archive.org/metadata/${encodeURIComponent(identifier)}`,
+    { signal: AbortSignal.timeout(15_000) },
+  );
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: `Internet Archive metadata returned HTTP ${response.status}.`,
+    };
+  }
+  const metadata = await response.json();
+  const candidates = [];
+  const candidateSizes = {};
+  const candidateTypes = {};
+  for (const file of metadata?.files || []) {
+    if (!file?.name) continue;
+    const url = `https://archive.org/download/${encodeURIComponent(identifier)}/${file.name
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/")}`;
+    if (!classifyMedia(url, file?.mime).allowed) continue;
+    candidates.push(url);
+    candidateSizes[url] = Number(file.size) || 0;
+    candidateTypes[url] = String(file?.mime || "");
+    if (candidates.length >= 20) break;
+  }
+  if (!candidates.length) {
+    return {
+      ok: false,
+      reason:
+        "This Internet Archive item exposes no complete supported media file.",
+    };
+  }
+  return {
+    candidateSizes,
+    candidateTypes,
+    candidates,
+    ok: true,
+    pageUrl,
+    provider: "internet-archive",
+    thumbnail: `https://archive.org/services/img/${encodeURIComponent(identifier)}`,
+    title: String(metadata?.metadata?.title || identifier),
+  };
 }
 
 async function resolveExtractorPage(pageUrl, extractor) {

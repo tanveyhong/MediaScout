@@ -24,7 +24,7 @@ const {
 } = require("electron");
 const { AppData } = require("./app-data");
 const { configureUpdates } = require("./update-service");
-const { parseHttpUrl } = require("./policy");
+const { classifyMedia, parseHttpUrl } = require("./policy");
 const { normalizePublicPage, resolvePublicPage } = require("./page-resolver");
 const {
   createAnonymousDouyinSession,
@@ -50,6 +50,7 @@ let updater;
 let lastClipboardText = "";
 const DEFAULT_PREFERENCES = Object.freeze({
   audioOnly: false,
+  authorizedDomains: "",
   clipboardMonitoring: false,
   closeBehavior: "quit",
   concurrentDownloads: 2,
@@ -873,6 +874,7 @@ async function resolveAndCapture(rawUrl, source = "Public page resolver") {
       douyinSession = await createAnonymousDouyinSession(rawUrl);
     }
     resolved = await resolvePublicPage(rawUrl, {
+      authorizedDomains: preferences.authorizedDomains,
       cookieFile: douyinSession?.cookieFile,
     });
   } finally {
@@ -891,6 +893,28 @@ async function resolveAndCapture(rawUrl, source = "Public page resolver") {
   for (const url of resolved.candidates) {
     const parsed = parseHttpUrl(url);
     if (!parsed) continue;
+    const classification = classifyMedia(
+      parsed.href,
+      resolved.candidateTypes?.[parsed.href] || "",
+    );
+    const genericProvider = [
+      "authorized-domain",
+      "direct-media",
+      "internet-archive",
+      "public-content",
+    ].includes(resolved.provider);
+    if (genericProvider && !classification.allowed) continue;
+    const extension =
+      classification.extension || path.extname(parsed.pathname) || ".mp4";
+    const audioExtension = /\.(?:aac|flac|m4a|mp3|oga|ogg|opus|wav)$/i.test(
+      extension,
+    );
+    const mime =
+      classification.mime !== "unknown"
+        ? classification.mime
+        : audioExtension
+          ? "audio/unknown"
+          : "video/unknown";
     const analysis = resolved.analysis
       ? {
           ...resolved.analysis,
@@ -906,9 +930,9 @@ async function resolveAndCapture(rawUrl, source = "Public page resolver") {
         allowed: true,
         analysis,
         detectedAt: new Date().toISOString(),
-        extension: ".mp4",
+        extension,
         hostname: parsed.hostname,
-        mime: "video/mp4",
+        mime,
         pageHost: new URL(resolved.pageUrl).hostname,
         pageUrl: resolved.pageUrl,
         size: resolved.candidateSizes?.[parsed.href] || 0,
@@ -992,9 +1016,12 @@ function launchCaptureBridge() {
     (media) => addDetectedMedia(media),
     DEFAULT_BRIDGE_PORT,
     async (pageUrl) => {
-      if (!isDouyinVideoUrl(pageUrl)) return {};
+      if (!isDouyinVideoUrl(pageUrl)) {
+        return { authorizedDomains: preferences.authorizedDomains };
+      }
       const douyinSession = await createAnonymousDouyinSession(pageUrl);
       return {
+        authorizedDomains: preferences.authorizedDomains,
         cookieFile: douyinSession.cookieFile,
         dispose: () => douyinSession.dispose(),
       };
@@ -1186,7 +1213,9 @@ app.whenReady().then(() => {
     const value = clipboard.readText().trim();
     if (!value || value === lastClipboardText) return;
     lastClipboardText = value;
-    const supportedUrl = normalizePublicPage(value);
+    const supportedUrl = normalizePublicPage(value, {
+      authorizedDomains: preferences.authorizedDomains,
+    });
     if (supportedUrl) send("clipboard:suggestion", { url: supportedUrl });
   }, 1_500);
 

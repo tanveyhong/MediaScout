@@ -1,4 +1,4 @@
-# Media Scout 0.4
+# Media Scout 0.5
 
 Media Scout is a Windows desktop MVP that resolves supported public post URLs into complete
 media files. It is intended for media the user owns, public-domain media, or sources whose
@@ -19,6 +19,8 @@ audio/video preview before its link is copied or the file is saved.
   bulk capture actions, filename templates, and content-fingerprint duplicate warnings.
 - Optional system-tray background mode and launch-with-Windows support.
 - Store-ready browser companion ZIP packaging and automated Electron restart smoke tests.
+- Provider adapters for complete direct media URLs, Internet Archive, Wikimedia,
+  and metadata-only resolution on explicitly authorized user-owned domains.
 - Local diagnostics, sanitized rotating logs, incomplete-download cleanup, and privacy controls.
 - Packaged-build update checks backed by GitHub Releases.
 
@@ -63,6 +65,14 @@ browser:
 The companion sends the public page URL—not browser cookies or media fragments—to the local
 resolver. Complete results appear in the Capture shelf and Captures library. Private posts,
 login-only content and DRM-protected media remain unsupported.
+
+## Additional authorized sources
+
+Paste or batch-resolve complete HTTP(S) media URLs directly. Internet Archive item pages and
+Wikimedia pages are recognized as public-content providers. For a site you own, add its
+hostname under **Settings → Authorized domains you control**; Media Scout will only read
+complete media URLs exposed in standard page metadata. This generic adapter does not run the
+broad extractor and does not accept HLS, DASH, DRM, login-only, or encrypted streams.
 
 ## Confirmed Windows release
 

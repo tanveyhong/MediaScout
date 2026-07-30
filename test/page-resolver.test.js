@@ -129,6 +129,62 @@ test("extracts complete MP4 candidates from public page metadata", () => {
   ]);
 });
 
+test("resolves complete direct media URLs", async () => {
+  const url = "https://media.example/public/sample.webm";
+  const result = await resolvePublicPage(url, {
+    fetchImpl: async () => ({
+      headers: new Headers({
+        "content-length": "2048",
+        "content-type": "video/webm",
+      }),
+      ok: true,
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.candidates, [url]);
+  assert.equal(result.candidateSizes[url], 2048);
+});
+
+test("resolves complete media metadata on an authorized domain", async () => {
+  const result = await resolvePublicPage(
+    "https://media.owner.example/watch/demo",
+    {
+      authorizedDomains: ["owner.example"],
+      fetchImpl: async () => ({
+        ok: true,
+        text: async () =>
+          '<meta property="og:video" content="/files/demo.mp4">',
+      }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.candidates, [
+    "https://media.owner.example/files/demo.mp4",
+  ]);
+});
+
+test("uses Internet Archive metadata for public media files", async () => {
+  const result = await resolvePublicPage(
+    "https://archive.org/details/public-sample",
+    {
+      fetchImpl: async () => ({
+        json: async () => ({
+          files: [
+            { name: "movie.mp4", size: "4096" },
+            { name: "playlist.m3u8", size: "10" },
+          ],
+          metadata: { title: "Public sample" },
+        }),
+        ok: true,
+      }),
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.candidates.length, 1);
+  assert.match(result.candidates[0], /movie\.mp4$/);
+  assert.equal(result.title, "Public sample");
+});
+
 test("resolves a public page without browser response fragments", async () => {
   const result = await resolvePublicPage(
     "https://instagram.com/reel/Test123/",
