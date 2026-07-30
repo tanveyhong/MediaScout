@@ -13,11 +13,14 @@ const {
   clipboard,
   dialog,
   ipcMain,
+  Notification,
   session,
   shell,
 } = require("electron");
+const { AppData } = require("./app-data");
+const { configureUpdates } = require("./update-service");
 const { parseHttpUrl } = require("./policy");
-const { resolvePublicPage } = require("./page-resolver");
+const { normalizePublicPage, resolvePublicPage } = require("./page-resolver");
 const {
   createAnonymousDouyinSession,
   isDouyinVideoUrl,
@@ -26,6 +29,7 @@ const { DEFAULT_BRIDGE_PORT, startCaptureBridge } = require("./capture-bridge");
 
 const MEDIA_PARTITION = "persist:media-scout";
 const DEFAULT_START_URL = "https://archive.org/";
+const pairingCode = crypto.randomInt(100_000, 1_000_000).toString();
 let mainWindow;
 let captureBridge;
 let captureBridgeRetryTimer;
@@ -33,8 +37,27 @@ let appClosing = false;
 let downloadDirectory = "";
 let alwaysOnTop = false;
 let downloadRightsConfirmed = false;
+let appData;
+let clipboardTimer;
+let updater;
+let lastClipboardText = "";
+const DEFAULT_PREFERENCES = Object.freeze({
+  audioOnly: false,
+  clipboardMonitoring: false,
+  maxHeight: 0,
+  maxFileSizeMb: 0,
+  nativeNotifications: true,
+  preferH264: true,
+});
+let preferences = { ...DEFAULT_PREFERENCES };
+let lastResolverError = "";
+const recoverableFiles = [];
 const completedDownloadPaths = new Set();
 const activeChildren = new Set();
+const activeDownloadHandles = new Map();
+const downloadQueue = [];
+let runningQueuedDownloads = 0;
+const pendingDownloadMetadata = new Map();
 const detectedUrls = new Set();
 const detectedKeys = new Set();
 const previewConversions = new Map();
@@ -64,6 +87,7 @@ function loadSettings() {
       downloadDirectory = settings.downloadDirectory;
     }
     alwaysOnTop = settings.alwaysOnTop === true;
+    preferences = { ...preferences, ...(settings.preferences || {}) };
   } catch {
     // First launch or an unreadable settings file falls back to Downloads.
   }
@@ -78,12 +102,48 @@ function saveSettings() {
         alwaysOnTop,
         downloadDirectory,
         downloadRightsConfirmed: false,
+        preferences,
       },
       null,
       2,
     ),
     "utf8",
   );
+}
+
+function finishHistory({
+  filename,
+  outputPath,
+  pageUrl = "",
+  size = 0,
+  sourceUrl = "",
+  state,
+  title = "",
+}) {
+  appData?.addHistory({
+    completedAt: new Date().toISOString(),
+    filename,
+    id: crypto.randomUUID(),
+    pageUrl,
+    path: state === "completed" ? outputPath : "",
+    size,
+    sourceUrl,
+    state,
+    title,
+  });
+  appData?.log(state === "completed" ? "info" : "error", "download-finished", {
+    filename,
+    state,
+  });
+  if (preferences.nativeNotifications && Notification.isSupported()) {
+    new Notification({
+      body:
+        state === "completed"
+          ? `${filename} was saved successfully.`
+          : `${filename} could not be saved.`,
+      title: state === "completed" ? "Download complete" : "Download failed",
+    }).show();
+  }
 }
 
 function availableDownloadPath(filename) {
@@ -101,13 +161,80 @@ function availableDownloadPath(filename) {
   return candidate;
 }
 
-function downloadFilename(title = "") {
+function downloadFilename(title = "", extension = ".mp4") {
   const safeTitle = String(title)
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 100);
-  return `${safeTitle || "Media Scout video"}.mp4`;
+  return `${safeTitle || "Media Scout media"}${extension}`;
+}
+
+function enqueueDownload(url, task) {
+  const job = { id: crypto.randomUUID(), task, url };
+  downloadQueue.push(job);
+  send("download:queued", {
+    id: job.id,
+    position: downloadQueue.length,
+    url,
+  });
+  pumpDownloadQueue();
+  return { jobId: job.id, ok: true, queued: true };
+}
+
+function pumpDownloadQueue() {
+  while (runningQueuedDownloads < 2 && downloadQueue.length) {
+    const job = downloadQueue.shift();
+    runningQueuedDownloads += 1;
+    Promise.resolve()
+      .then(job.task)
+      .catch((error) => {
+        appData?.log("error", "queued-download-failed", {
+          message: error.message,
+        });
+        send("download:finished", {
+          filename: "",
+          path: "",
+          state: "interrupted",
+          url: job.url,
+        });
+      })
+      .finally(() => {
+        runningQueuedDownloads -= 1;
+        pumpDownloadQueue();
+      });
+  }
+}
+
+function emitExtractorProgress(child, url) {
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk) => {
+    for (const line of chunk.split(/\r?\n/)) {
+      const match = line.match(
+        /MEDIA_SCOUT_PROGRESS:([\d.]+)%\|([^|]*)\|([^|]*)/,
+      );
+      if (!match) continue;
+      send("download:progress", {
+        eta: match[3].trim(),
+        percent: Number(match[1]),
+        speed: match[2].trim(),
+        state: "progressing",
+        url,
+      });
+    }
+  });
+}
+
+function youtubeFormat() {
+  if (preferences.audioOnly) return "ba/b";
+  const height = preferences.maxHeight
+    ? `[height<=${Number(preferences.maxHeight)}]`
+    : "";
+  const codec = preferences.preferH264 ? "[vcodec^=avc1]" : "";
+  return (
+    `bv*[ext=mp4]${codec}${height}+ba[ext=m4a]/` +
+    `bv*[ext=mp4]${height}+ba[ext=m4a]/b[ext=mp4]${height}/b`
+  );
 }
 
 function trackedSpawn(command, args, options) {
@@ -116,10 +243,12 @@ function trackedSpawn(command, args, options) {
   child.once("close", (code) => {
     activeChildren.delete(child);
     if (code && !appClosing) {
-      console.error("[media-scout] child process failed", {
+      const details = {
         command: path.basename(command),
         exitCode: code,
-      });
+      };
+      console.error("[media-scout] child process failed", details);
+      appData?.log("error", "child-process-failed", details);
     }
   });
   return child;
@@ -131,7 +260,12 @@ function cleanupTemporaryFiles() {
     {
       directory: app.getPath("temp"),
       maxAge: 24 * 60 * 60 * 1000,
-      pattern: /\.working(?:\.mp4)?$/,
+      pattern: /\.working(?:\.(?:mp3|mp4))?$/,
+    },
+    {
+      directory: downloadDirectory,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      pattern: /\.working(?:\.(?:mp3|mp4))?$/,
     },
     {
       directory: path.join(app.getPath("temp"), "media-scout-previews"),
@@ -147,8 +281,23 @@ function cleanupTemporaryFiles() {
       if (!entry.isFile() || !target.pattern.test(entry.name)) continue;
       const filePath = path.join(target.directory, entry.name);
       try {
-        if (now - fs.statSync(filePath).mtimeMs > target.maxAge) {
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > target.maxAge) {
           fs.rmSync(filePath, { force: true });
+          fs.rmSync(`${filePath}.json`, { force: true });
+        } else if (/\.working(?:\.(?:mp3|mp4))?$/.test(entry.name)) {
+          let metadata = {};
+          try {
+            metadata = JSON.parse(fs.readFileSync(`${filePath}.json`, "utf8"));
+          } catch {
+            metadata = {};
+          }
+          recoverableFiles.push({
+            ...metadata,
+            modifiedAt: stats.mtime.toISOString(),
+            name: entry.name,
+            path: filePath,
+          });
         }
       } catch (error) {
         console.error("[media-scout] temporary file cleanup failed", {
@@ -160,10 +309,23 @@ function cleanupTemporaryFiles() {
   }
 }
 
-function mergeMediaDownload(videoUrl, audioUrl, title = "") {
+function registerRecovery(temporaryPath, metadata) {
+  fs.writeFileSync(
+    `${temporaryPath}.json`,
+    JSON.stringify(metadata, null, 2),
+    "utf8",
+  );
+}
+
+function clearRecovery(temporaryPath) {
+  fs.rmSync(`${temporaryPath}.json`, { force: true });
+}
+
+function mergeMediaDownload(videoUrl, audioUrl, title = "", pageUrl = "") {
   const outputPath = availableDownloadPath(downloadFilename(title));
   const temporaryPath = `${outputPath}.${crypto.randomUUID()}.working`;
   const filename = path.basename(outputPath);
+  registerRecovery(temporaryPath, { pageUrl, sourceUrl: videoUrl, title });
   send("download:started", { filename, url: videoUrl });
   return new Promise((resolve) => {
     let settled = false;
@@ -194,9 +356,18 @@ function mergeMediaDownload(videoUrl, audioUrl, title = "") {
       ],
       { windowsHide: true },
     );
+    activeDownloadHandles.set(videoUrl, child);
+    send("download:progress", {
+      percent: 0,
+      phase: "Merging video and audio",
+      state: "progressing",
+      url: videoUrl,
+    });
     const finish = (state) => {
       if (settled) return;
       settled = true;
+      clearRecovery(temporaryPath);
+      activeDownloadHandles.delete(videoUrl);
       send("download:finished", {
         filename,
         path: state === "completed" ? outputPath : "",
@@ -205,6 +376,13 @@ function mergeMediaDownload(videoUrl, audioUrl, title = "") {
       });
       if (state === "completed")
         completedDownloadPaths.add(path.resolve(outputPath));
+      finishHistory({
+        filename,
+        outputPath,
+        sourceUrl: videoUrl,
+        state,
+        title,
+      });
       resolve({ ok: state === "completed" });
     };
     child.once("error", () => {
@@ -232,9 +410,11 @@ function mergeMediaDownload(videoUrl, audioUrl, title = "") {
 }
 
 function downloadYouTubePage(pageUrl, title, sourceUrl) {
-  const outputPath = availableDownloadPath(downloadFilename(title));
-  const temporaryPath = `${outputPath}.${crypto.randomUUID()}.working.mp4`;
+  const extension = preferences.audioOnly ? ".mp3" : ".mp4";
+  const outputPath = availableDownloadPath(downloadFilename(title, extension));
+  const temporaryPath = `${outputPath}.${crypto.randomUUID()}.working${extension}`;
   const filename = path.basename(outputPath);
+  registerRecovery(temporaryPath, { pageUrl, sourceUrl, title });
   let settled = false;
   send("download:started", { filename, url: sourceUrl });
   return new Promise((resolve) => {
@@ -244,22 +424,29 @@ function downloadYouTubePage(pageUrl, title, sourceUrl) {
         "--no-playlist",
         "--no-warnings",
         "--force-overwrites",
+        "--newline",
+        "--progress-template",
+        "MEDIA_SCOUT_PROGRESS:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
         "--format",
-        "bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/" +
-          "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/b",
+        youtubeFormat(),
         "--ffmpeg-location",
         path.dirname(unpackedBinaryPath(ffmpegPath)),
-        "--merge-output-format",
-        "mp4",
+        ...(preferences.audioOnly
+          ? ["--extract-audio", "--audio-format", "mp3"]
+          : ["--merge-output-format", "mp4"]),
         "--output",
         temporaryPath,
         pageUrl,
       ],
       { windowsHide: true },
     );
+    activeDownloadHandles.set(sourceUrl, child);
+    emitExtractorProgress(child, sourceUrl);
     const finish = (state) => {
       if (settled) return;
       settled = true;
+      clearRecovery(temporaryPath);
+      activeDownloadHandles.delete(sourceUrl);
       send("download:finished", {
         filename,
         path: state === "completed" ? outputPath : "",
@@ -268,6 +455,14 @@ function downloadYouTubePage(pageUrl, title, sourceUrl) {
       });
       if (state === "completed")
         completedDownloadPaths.add(path.resolve(outputPath));
+      finishHistory({
+        filename,
+        outputPath,
+        pageUrl,
+        sourceUrl,
+        state,
+        title,
+      });
       resolve({ ok: state === "completed" });
     };
     child.once("error", () => finish("interrupted"));
@@ -300,6 +495,7 @@ async function downloadDouyinPage(pageUrl, title, sourceUrl) {
   const outputPath = availableDownloadPath(downloadFilename(title));
   const temporaryPath = `${outputPath}.${crypto.randomUUID()}.working.mp4`;
   const filename = path.basename(outputPath);
+  registerRecovery(temporaryPath, { pageUrl, sourceUrl, title });
   let settled = false;
   send("download:started", { filename, url: sourceUrl });
 
@@ -310,6 +506,9 @@ async function downloadDouyinPage(pageUrl, title, sourceUrl) {
         "--no-playlist",
         "--no-warnings",
         "--force-overwrites",
+        "--newline",
+        "--progress-template",
+        "MEDIA_SCOUT_PROGRESS:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
         "--cookies",
         douyinSession.cookieFile,
         "--format",
@@ -320,9 +519,13 @@ async function downloadDouyinPage(pageUrl, title, sourceUrl) {
       ],
       { windowsHide: true },
     );
+    activeDownloadHandles.set(sourceUrl, child);
+    emitExtractorProgress(child, sourceUrl);
     const finish = (state) => {
       if (settled) return;
       settled = true;
+      clearRecovery(temporaryPath);
+      activeDownloadHandles.delete(sourceUrl);
       douyinSession.dispose();
       send("download:finished", {
         filename,
@@ -332,6 +535,14 @@ async function downloadDouyinPage(pageUrl, title, sourceUrl) {
       });
       if (state === "completed")
         completedDownloadPaths.add(path.resolve(outputPath));
+      finishHistory({
+        filename,
+        outputPath,
+        pageUrl,
+        sourceUrl,
+        state,
+        title,
+      });
       resolve({ ok: state === "completed" });
     };
     child.once("error", () => finish("interrupted"));
@@ -485,7 +696,15 @@ async function resolveAndCapture(rawUrl, source = "Public page resolver") {
   } finally {
     douyinSession?.dispose();
   }
-  if (!resolved.ok) return resolved;
+  if (!resolved.ok) {
+    lastResolverError = resolved.reason || "Unknown resolver error.";
+    appData?.log("error", "resolve-failed", {
+      reason: lastResolverError,
+      url: rawUrl,
+    });
+    return resolved;
+  }
+  lastResolverError = "";
   let added = 0;
   for (const url of resolved.candidates) {
     const parsed = parseHttpUrl(url);
@@ -527,6 +746,7 @@ function configureMediaSession() {
   const mediaSession = session.fromPartition(MEDIA_PARTITION);
 
   mediaSession.on("will-download", (_event, item) => {
+    activeDownloadHandles.set(item.getURL(), item);
     item.setSavePath(availableDownloadPath(item.getFilename()));
     send("download:started", {
       filename: item.getFilename(),
@@ -534,9 +754,21 @@ function configureMediaSession() {
     });
 
     item.once("done", (_downloadEvent, state) => {
+      activeDownloadHandles.delete(item.getURL());
+      const metadata = pendingDownloadMetadata.get(item.getURL()) || {};
+      pendingDownloadMetadata.delete(item.getURL());
       if (state === "completed") {
         completedDownloadPaths.add(path.resolve(item.getSavePath()));
       }
+      finishHistory({
+        filename: item.getFilename(),
+        outputPath: item.getSavePath(),
+        pageUrl: metadata.pageUrl,
+        size: item.getReceivedBytes(),
+        sourceUrl: item.getURL(),
+        state,
+        title: metadata.title,
+      });
       send("download:finished", {
         filename: item.getFilename(),
         path: item.getSavePath(),
@@ -572,6 +804,7 @@ function launchCaptureBridge() {
         dispose: () => douyinSession.dispose(),
       };
     },
+    { pairingCode },
   );
   captureBridge.once("error", () => {
     captureBridge = null;
@@ -679,11 +912,33 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  appData = new AppData(app.getPath("userData"));
+  for (const entry of appData.getHistory()) {
+    if (
+      entry.state === "completed" &&
+      entry.path &&
+      fs.existsSync(entry.path)
+    ) {
+      completedDownloadPaths.add(path.resolve(entry.path));
+    }
+  }
   loadSettings();
   cleanupTemporaryFiles();
   configureMediaSession();
   launchCaptureBridge();
   createWindow();
+  updater = configureUpdates(send, (...args) => appData.log(...args));
+  if (app.isPackaged) {
+    setTimeout(() => updater.checkForUpdates().catch(() => {}), 4_000);
+  }
+  clipboardTimer = setInterval(() => {
+    if (!preferences.clipboardMonitoring) return;
+    const value = clipboard.readText().trim();
+    if (!value || value === lastClipboardText) return;
+    lastClipboardText = value;
+    const supportedUrl = normalizePublicPage(value);
+    if (supportedUrl) send("clipboard:suggestion", { url: supportedUrl });
+  }, 1_500);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -693,6 +948,7 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   appClosing = true;
   clearTimeout(captureBridgeRetryTimer);
+  clearInterval(clipboardTimer);
   if (captureBridge) captureBridge.shutdown();
   for (const child of activeChildren) child.kill();
   if (process.platform !== "darwin") app.quit();
@@ -711,7 +967,22 @@ ipcMain.handle("app:get-config", () => ({
   downloadDirectory,
   alwaysOnTop,
   downloadRightsConfirmed,
+  pairingCode,
+  preferences,
 }));
+
+ipcMain.handle("settings:update-preferences", (_event, nextPreferences) => {
+  preferences = {
+    ...preferences,
+    ...Object.fromEntries(
+      Object.entries(nextPreferences || {}).filter(([key]) =>
+        Object.hasOwn(preferences, key),
+      ),
+    ),
+  };
+  saveSettings();
+  return { ok: true, preferences };
+});
 
 ipcMain.handle("settings:confirm-download-rights", () => {
   downloadRightsConfirmed = true;
@@ -807,18 +1078,64 @@ ipcMain.handle(
         parsedPage.hostname.toLowerCase(),
       )
     ) {
-      return downloadYouTubePage(parsedPage.href, title, parsed.href);
+      return enqueueDownload(parsed.href, () =>
+        downloadYouTubePage(parsedPage.href, title, parsed.href),
+      );
     }
     if (parsedPage && isDouyinVideoUrl(parsedPage.href)) {
-      return downloadDouyinPage(parsedPage.href, title, parsed.href);
+      return enqueueDownload(parsed.href, () =>
+        downloadDouyinPage(parsedPage.href, title, parsed.href),
+      );
     }
     if (parsedAudio) {
-      return mergeMediaDownload(parsed.href, parsedAudio.href, title);
+      return enqueueDownload(parsed.href, () =>
+        mergeMediaDownload(parsed.href, parsedAudio.href, title, pageUrl),
+      );
     }
-    session.fromPartition(MEDIA_PARTITION).downloadURL(parsed.href);
-    return { ok: true };
+    return enqueueDownload(parsed.href, () => {
+      pendingDownloadMetadata.set(parsed.href, { pageUrl, title });
+      session.fromPartition(MEDIA_PARTITION).downloadURL(parsed.href);
+    });
   },
 );
+
+ipcMain.handle("media:cancel", (_event, url) => {
+  const parsed = parseHttpUrl(url);
+  if (!parsed || !detectedUrls.has(parsed.href)) return { ok: false };
+  const queuedIndex = downloadQueue.findIndex((job) => job.url === parsed.href);
+  if (queuedIndex >= 0) {
+    downloadQueue.splice(queuedIndex, 1);
+    send("download:finished", {
+      filename: "",
+      path: "",
+      state: "cancelled",
+      url: parsed.href,
+    });
+    return { ok: true };
+  }
+  const handle = activeDownloadHandles.get(parsed.href);
+  if (!handle) return { ok: false, message: "Download is no longer active." };
+  if (typeof handle.cancel === "function") handle.cancel();
+  else if (typeof handle.kill === "function") handle.kill();
+  return { ok: true };
+});
+
+ipcMain.handle("media:toggle-pause", (_event, url) => {
+  const parsed = parseHttpUrl(url);
+  const handle = parsed ? activeDownloadHandles.get(parsed.href) : null;
+  if (!handle || typeof handle.pause !== "function") {
+    return {
+      ok: false,
+      message: "Pause is unavailable while media is being merged or converted.",
+    };
+  }
+  if (handle.isPaused()) {
+    handle.resume();
+    return { ok: true, paused: false };
+  }
+  handle.pause();
+  return { ok: true, paused: true };
+});
 
 ipcMain.handle(
   "media:compatible-preview",
@@ -873,4 +1190,156 @@ ipcMain.handle("file:show", (_event, filePath) => {
   }
   shell.showItemInFolder(resolved);
   return { ok: true };
+});
+
+ipcMain.handle("file:open", async (_event, filePath) => {
+  if (typeof filePath !== "string") return { ok: false };
+  const resolved = path.resolve(filePath);
+  if (!completedDownloadPaths.has(resolved) || !fs.existsSync(resolved)) {
+    return { ok: false, message: "This file is unavailable." };
+  }
+  const message = await shell.openPath(resolved);
+  return message ? { ok: false, message } : { ok: true };
+});
+
+ipcMain.handle("history:list", () => appData.getHistory());
+
+ipcMain.handle("history:clear", () => {
+  appData.clearHistory();
+  return { ok: true };
+});
+
+ipcMain.handle("capture:batch", async (_event, values) => {
+  const urls = [...new Set(Array.isArray(values) ? values : [])].slice(0, 50);
+  const results = [];
+  for (const url of urls) {
+    try {
+      results.push({ url, ...(await resolveAndCapture(url, "Batch capture")) });
+    } catch (error) {
+      appData.log("error", "batch-resolve-failed", {
+        message: error.message,
+        url,
+      });
+      results.push({ ok: false, reason: "Resolver failed.", url });
+    }
+  }
+  return { ok: true, results };
+});
+
+ipcMain.handle("diagnostics:get", () => {
+  let downloadDirectoryWritable = false;
+  try {
+    fs.accessSync(downloadDirectory, fs.constants.W_OK);
+    downloadDirectoryWritable = true;
+  } catch {
+    downloadDirectoryWritable = false;
+  }
+  return appData.diagnosticReport({
+    appVersion: app.getVersion(),
+    bridgeOnline: Boolean(captureBridge?.listening),
+    downloadDirectory,
+    downloadDirectoryWritable,
+    electronVersion: process.versions.electron,
+    ffmpegPath: path.basename(ffmpegPath),
+    pendingProcesses: activeChildren.size,
+    platform: process.platform,
+    platformResolvers: "Instagram, YouTube, Bilibili, Douyin configured",
+    recoverableFiles: recoverableFiles.length,
+    resolverStatus: lastResolverError || "Ready",
+    ytDlpPath: path.basename(ytDlpPath),
+  });
+});
+
+ipcMain.handle("diagnostics:export", async () => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: path.join(
+      app.getPath("documents"),
+      `media-scout-diagnostics-${Date.now()}.json`,
+    ),
+    filters: [{ extensions: ["json"], name: "JSON" }],
+  });
+  if (result.canceled || !result.filePath)
+    return { ok: false, cancelled: true };
+  const report = appData.diagnosticReport({
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron,
+    platform: process.platform,
+  });
+  fs.writeFileSync(result.filePath, JSON.stringify(report, null, 2), "utf8");
+  return { ok: true, path: result.filePath };
+});
+
+ipcMain.handle("privacy:clear-data", async () => {
+  appData.clearHistory();
+  appData.clearLogs();
+  detectedUrls.clear();
+  detectedKeys.clear();
+  preferences = { ...DEFAULT_PREFERENCES };
+  fs.rmSync(settingsPath(), { force: true });
+  const previewDirectory = path.join(
+    app.getPath("temp"),
+    "media-scout-previews",
+  );
+  if (fs.existsSync(previewDirectory)) {
+    fs.rmSync(previewDirectory, { force: true, recursive: true });
+  }
+  await session.fromPartition(MEDIA_PARTITION).clearStorageData();
+  return { ok: true };
+});
+
+ipcMain.handle("recovery:list", () =>
+  recoverableFiles.map((file) => ({ ...file })),
+);
+
+ipcMain.handle("recovery:remove", (_event, filePath) => {
+  const index = recoverableFiles.findIndex((file) => file.path === filePath);
+  if (index < 0) return { ok: false };
+  fs.rmSync(recoverableFiles[index].path, { force: true });
+  fs.rmSync(`${recoverableFiles[index].path}.json`, { force: true });
+  recoverableFiles.splice(index, 1);
+  return { ok: true };
+});
+
+ipcMain.handle("recovery:retry", async (_event, filePath) => {
+  const index = recoverableFiles.findIndex((file) => file.path === filePath);
+  if (index < 0) return { ok: false };
+  const file = recoverableFiles[index];
+  fs.rmSync(file.path, { force: true });
+  fs.rmSync(`${file.path}.json`, { force: true });
+  recoverableFiles.splice(index, 1);
+  if (file.pageUrl)
+    return resolveAndCapture(file.pageUrl, "Recovered download");
+  const parsed = parseHttpUrl(file.sourceUrl);
+  if (!parsed)
+    return { ok: false, message: "No reusable source URL was recorded." };
+  addDetectedMedia({
+    allowed: true,
+    detectedAt: new Date().toISOString(),
+    extension: path.extname(parsed.pathname) || ".mp4",
+    hostname: parsed.hostname,
+    mime: "video/mp4",
+    pageHost: parsed.hostname,
+    size: 0,
+    source: "Recovered download",
+    title: file.title || "",
+    url: parsed.href,
+  });
+  return { ok: true };
+});
+
+ipcMain.handle("update:check", async () => {
+  if (!app.isPackaged) {
+    return { ok: false, message: "Updates are available in packaged builds." };
+  }
+  await updater.checkForUpdates();
+  return { ok: true };
+});
+
+ipcMain.handle("update:download", async () => {
+  await updater.downloadUpdate();
+  return { ok: true };
+});
+
+ipcMain.handle("update:install", () => {
+  updater.quitAndInstall();
 });

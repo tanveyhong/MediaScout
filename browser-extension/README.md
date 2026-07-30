@@ -6,7 +6,9 @@ Load this folder as an unpacked extension in Edge or Chrome during development:
 2. Enable Developer mode.
 3. Choose **Load unpacked**.
 4. Select `C:\Projects\MediaScout\browser-extension`.
-5. Keep Media Scout open and play a supported public video, including YouTube watch pages.
+5. Open the companion popup and enter the six-digit code shown on Media Scout's
+   Extension setup page.
+6. Keep Media Scout open and play a supported public video, including YouTube watch pages.
 
 The extension sends detected HTTP(S) media requests only to `127.0.0.1:48731`.
 

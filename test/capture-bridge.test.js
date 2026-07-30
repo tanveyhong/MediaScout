@@ -81,6 +81,40 @@ test("pairs with one extension origin for the lifetime of the bridge", async () 
   }
 });
 
+test("requires the desktop pairing code when configured", async () => {
+  const server = startCaptureBridge(
+    () => {},
+    0,
+    () => ({}),
+    { pairingCode: "123456" },
+  );
+  await new Promise((resolve) => server.once("listening", resolve));
+  const { port } = server.address();
+  const origin = "chrome-extension://trustedcompanion";
+  try {
+    const rejected = await fetch(`http://127.0.0.1:${port}/commands`, {
+      headers: { Origin: origin },
+    });
+    assert.equal(rejected.status, 403);
+
+    const paired = await fetch(`http://127.0.0.1:${port}/pair`, {
+      method: "POST",
+      headers: {
+        Origin: origin,
+        "X-Media-Scout-Pairing": "123456",
+      },
+    });
+    assert.equal(paired.status, 200);
+
+    const commands = await fetch(`http://127.0.0.1:${port}/commands`, {
+      headers: { Origin: origin },
+    });
+    assert.equal(commands.status, 200);
+  } finally {
+    server.shutdown();
+  }
+});
+
 test("rejects oversized capture payloads without resolving them", async () => {
   let captures = 0;
   const server = startCaptureBridge(() => {

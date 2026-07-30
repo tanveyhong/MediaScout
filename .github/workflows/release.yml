@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   windows:
@@ -31,13 +33,35 @@ jobs:
       - run: pnpm verify
       - run: pnpm format:check
       - run: pnpm audit --prod
-      - run: pnpm release:ci
+      - name: Build signed installer when certificate secrets are configured
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: pnpm release:ci
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist -File |
+            Where-Object Extension -In ".exe", ".yml", ".blockmap" |
+            ForEach-Object {
+              "$(($_ | Get-FileHash -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+            } | Set-Content dist/SHA256SUMS.txt
+      - name: Generate build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.exe
+            dist/*.yml
+            dist/*.blockmap
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
+          $assets = Get-ChildItem dist -File |
+            Where-Object Extension -In ".exe", ".yml", ".blockmap", ".txt" |
+            Select-Object -ExpandProperty FullName
           gh release create "${{ github.ref_name }}" `
-            (Get-ChildItem dist -Filter "*.exe" | Select-Object -ExpandProperty FullName) `
+            $assets `
             --generate-notes `
             --title "Media Scout ${{ github.ref_name }}"

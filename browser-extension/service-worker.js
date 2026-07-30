@@ -6,6 +6,14 @@ const sentKeys = new Map();
 const recentMediaByTab = new Map();
 const pendingShareTabs = new Map();
 
+async function bridgeHeaders(contentType = false) {
+  const { pairingCode = "" } = await chrome.storage.local.get("pairingCode");
+  return {
+    ...(contentType ? { "Content-Type": "application/json" } : {}),
+    ...(pairingCode ? { "X-Media-Scout-Pairing": pairingCode } : {}),
+  };
+}
+
 function decodedUrl(url) {
   try {
     return decodeURIComponent(url);
@@ -183,7 +191,7 @@ async function resolvePage(pageUrl, media = {}) {
   try {
     const response = await fetch(RESOLVE_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await bridgeHeaders(true),
       body: JSON.stringify({
         mediaUrl: media.mediaUrl || "",
         mediaCandidates:
@@ -321,7 +329,10 @@ async function pollCommands() {
   if (polling) return;
   polling = true;
   try {
-    const response = await fetch(COMMANDS_URL, { cache: "no-store" });
+    const response = await fetch(COMMANDS_URL, {
+      cache: "no-store",
+      headers: await bridgeHeaders(),
+    });
     if (response.ok) {
       const payload = await response.json();
       for (const command of payload.commands || []) {
