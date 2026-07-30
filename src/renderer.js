@@ -603,7 +603,8 @@ copyExtensionPathButton.addEventListener("click", async () => {
 });
 
 showExtensionFolderButton.addEventListener("click", async () => {
-  await window.mediaScout.showExtensionFolder();
+  const result = await window.mediaScout.showExtensionFolder();
+  if (!result.ok) showToast(result.message);
 });
 
 returnToCaptureButton.addEventListener("click", () => selectView("browser"));

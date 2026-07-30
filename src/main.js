@@ -76,6 +76,12 @@ function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
 }
 
+function extensionDirectory() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "app.asar.unpacked", "browser-extension")
+    : path.resolve(__dirname, "..", "browser-extension");
+}
+
 function loadSettings() {
   downloadDirectory = app.getPath("downloads");
   try {
@@ -962,7 +968,7 @@ ipcMain.handle("navigation:validate", (_event, rawUrl) => {
 });
 
 ipcMain.handle("app:get-config", () => ({
-  extensionPath: path.resolve(__dirname, "..", "browser-extension"),
+  extensionPath: extensionDirectory(),
   startUrl: process.env.MEDIA_SCOUT_START_URL || DEFAULT_START_URL,
   downloadDirectory,
   alwaysOnTop,
@@ -1026,15 +1032,21 @@ ipcMain.handle("settings:choose-download-directory", async () => {
 });
 
 ipcMain.handle("extension:copy-path", () => {
-  const extensionPath = path.resolve(__dirname, "..", "browser-extension");
+  const extensionPath = extensionDirectory();
   clipboard.writeText(extensionPath);
   return { ok: true };
 });
 
 ipcMain.handle("extension:show-folder", () => {
-  const extensionPath = path.resolve(__dirname, "..", "browser-extension");
+  const extensionPath = extensionDirectory();
+  if (!fs.existsSync(path.join(extensionPath, "manifest.json"))) {
+    return {
+      ok: false,
+      message: "The packaged browser companion folder is unavailable.",
+    };
+  }
   shell.openPath(extensionPath);
-  return { ok: true };
+  return { ok: true, extensionPath };
 });
 
 ipcMain.handle("extension:force-refresh", () => {

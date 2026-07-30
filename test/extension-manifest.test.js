@@ -11,6 +11,9 @@ const manifest = JSON.parse(
     "utf8",
   ),
 );
+const packageJson = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
+);
 
 test("extension access is limited to supported sites and the local bridge", () => {
   assert.equal(manifest.host_permissions.includes("<all_urls>"), false);
@@ -19,4 +22,8 @@ test("extension access is limited to supported sites and the local bridge", () =
     false,
   );
   assert.ok(manifest.host_permissions.includes("http://127.0.0.1:48731/*"));
+});
+
+test("packaged builds expose the companion outside the ASAR archive", () => {
+  assert.ok(packageJson.build.asarUnpack.includes("browser-extension/**/*"));
 });
