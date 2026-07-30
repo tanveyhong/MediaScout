@@ -1,6 +1,7 @@
 "use strict";
 
 const clearButton = document.querySelector("#clearButton");
+const forceRefreshButton = document.querySelector("#forceRefreshButton");
 const resultCount = document.querySelector("#resultCount");
 const emptyState = document.querySelector("#emptyState");
 const resultsList = document.querySelector("#resultsList");
@@ -768,6 +769,20 @@ clearButton.addEventListener("click", async () => {
   downloadViews.clear();
   await window.mediaScout.clearMedia();
   updateCount();
+});
+
+forceRefreshButton.addEventListener("click", async () => {
+  forceRefreshButton.disabled = true;
+  const result = await window.mediaScout.forceRefresh();
+  if (result.ok) {
+    showToast("Refreshing the active browser tab…");
+    setTimeout(() => {
+      forceRefreshButton.disabled = false;
+    }, 1_500);
+    return;
+  }
+  forceRefreshButton.disabled = false;
+  showToast(result.message);
 });
 
 window.mediaScout.onDetected((media) => {
