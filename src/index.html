@@ -17,6 +17,10 @@
         <h1>Media Scout</h1>
       </div>
       <div class="titlebar-actions">
+        <div id="connectionStatus" class="status-pill">
+          <span class="status-dot"></span>
+          <span id="connectionStatusText">Checking companion...</span>
+        </div>
         <button
           id="pinButton"
           class="pin-button"
@@ -79,6 +83,10 @@
         <button class="nav-button" data-view="library" title="Download history">
           <span class="nav-icon">▣</span><span class="nav-label">Library</span>
         </button>
+        <button class="nav-button" data-view="downloads" title="Download queue">
+          <span class="nav-icon">↓</span
+          ><span class="nav-label">Downloads</span>
+        </button>
         <button class="nav-button" data-view="setup" title="Extension setup">
           <svg class="nav-svg" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M8.5 3.5v4m7-4v4M5 9h14v3a7 7 0 0 1-14 0V9Zm7 10v2" />
@@ -135,6 +143,18 @@
                 <h2><span id="resultCount">0</span> unique files</h2>
               </div>
               <div class="results-heading-actions">
+                <button id="selectAllMedia" class="quiet-button">
+                  Select all
+                </button>
+                <button id="saveSelectedMedia" class="quiet-button">
+                  Save selected
+                </button>
+                <button id="dismissSelectedMedia" class="quiet-button">
+                  Dismiss selected
+                </button>
+                <button id="exportSelectedMedia" class="quiet-button">
+                  Export metadata
+                </button>
                 <button id="forceRefreshButton" class="primary-button">
                   Force refresh
                 </button>
@@ -188,6 +208,19 @@
           <div id="historyList" class="history-list"></div>
         </section>
 
+        <section id="downloadsView" class="page-view app-view">
+          <header class="page-heading">
+            <div>
+              <span class="eyebrow">Transfers</span>
+              <h2>Download queue</h2>
+            </div>
+            <button id="pauseAllDownloads" class="quiet-button">
+              Pause active
+            </button>
+          </header>
+          <div id="downloadQueueList" class="history-list"></div>
+        </section>
+
         <section id="settingsView" class="page-view app-view">
           <header class="page-heading">
             <div>
@@ -218,6 +251,10 @@
                 <p>
                   Automatically detect direct media played in Edge or Chrome.
                 </p>
+                <p id="companionHealth">Checking companion health...</p>
+                <button id="resetPairing" class="quiet-button">
+                  Reset pairing
+                </button>
               </div>
               <span class="chevron">›</span>
             </article>
@@ -266,6 +303,38 @@
                   ><input id="nativeNotifications" type="checkbox" /> Native
                   completion notifications</label
                 >
+                <label>
+                  Closing the window
+                  <select id="closeBehavior">
+                    <option value="quit">Quit Media Scout</option>
+                    <option value="tray">Keep running in system tray</option>
+                  </select>
+                </label>
+                <label
+                  ><input id="openAtLogin" type="checkbox" /> Launch with
+                  Windows</label
+                >
+                <label
+                  ><input id="pauseOnBattery" type="checkbox" /> Pause direct
+                  transfers and hold the queue while on battery</label
+                >
+                <label>
+                  Concurrent downloads
+                  <input
+                    id="concurrentDownloads"
+                    type="number"
+                    min="1"
+                    max="6"
+                  />
+                </label>
+                <label>
+                  Speed limit (KB/s, 0 for unlimited)
+                  <input id="speedLimitKbps" type="number" min="0" step="100" />
+                </label>
+                <label>
+                  Filename template
+                  <input id="filenameTemplate" value="{title}" />
+                </label>
               </div>
             </article>
             <article class="settings-card">

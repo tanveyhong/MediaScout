@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("mediaScout", {
   copyExtensionPath: () => ipcRenderer.invoke("extension:copy-path"),
   showExtensionFolder: () => ipcRenderer.invoke("extension:show-folder"),
   forceRefresh: () => ipcRenderer.invoke("extension:force-refresh"),
+  getExtensionStatus: () => ipcRenderer.invoke("extension:status"),
+  resetPairing: () => ipcRenderer.invoke("extension:reset-pairing"),
   toggleAlwaysOnTop: () => ipcRenderer.invoke("window:toggle-always-on-top"),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
@@ -28,9 +30,15 @@ contextBridge.exposeInMainWorld("mediaScout", {
     ipcRenderer.invoke("media:compatible-preview", url, audioUrl),
   openInBrowser: (url) => ipcRenderer.invoke("media:open-browser", url),
   clearMedia: () => ipcRenderer.invoke("media:clear"),
+  exportMediaMetadata: (media) =>
+    ipcRenderer.invoke("media:export-metadata", media),
   batchCapture: (urls) => ipcRenderer.invoke("capture:batch", urls),
   getHistory: () => ipcRenderer.invoke("history:list"),
   clearHistory: () => ipcRenderer.invoke("history:clear"),
+  getDownloadQueue: () => ipcRenderer.invoke("downloads:list"),
+  reorderDownload: (jobId, direction) =>
+    ipcRenderer.invoke("downloads:reorder", jobId, direction),
+  pauseAllDownloads: () => ipcRenderer.invoke("downloads:pause-all"),
   getDiagnostics: () => ipcRenderer.invoke("diagnostics:get"),
   exportDiagnostics: () => ipcRenderer.invoke("diagnostics:export"),
   clearPrivateData: () => ipcRenderer.invoke("privacy:clear-data"),
@@ -56,4 +64,6 @@ contextBridge.exposeInMainWorld("mediaScout", {
     ipcRenderer.on("clipboard:suggestion", (_event, data) => callback(data)),
   onUpdateStatus: (callback) =>
     ipcRenderer.on("update:status", (_event, data) => callback(data)),
+  onNotice: (callback) =>
+    ipcRenderer.on("app:notice", (_event, data) => callback(data)),
 });

@@ -100,6 +100,22 @@ h1 {
   font-size: 12px;
 }
 
+.status-pill.connected {
+  border-color: #6f4350;
+  color: #ffe8eb;
+}
+
+.status-pill.connected .status-dot {
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+
+.history-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
 .titlebar-actions {
   display: flex;
   align-items: center;
@@ -491,7 +507,7 @@ h2 {
 
 .media-card {
   display: grid;
-  grid-template-columns: 110px minmax(0, 1fr);
+  grid-template-columns: 18px 110px minmax(0, 1fr);
   gap: 14px;
   margin-bottom: 10px;
   height: 164px;
@@ -505,9 +521,24 @@ h2 {
     transform 150ms ease;
 }
 
+.media-selection {
+  align-self: start;
+  margin-top: 4px;
+}
+
 .media-card:hover {
   border-color: #76505a;
   transform: translateY(-1px);
+}
+
+.media-card.pinned {
+  border-color: var(--accent);
+}
+
+.media-pin {
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 10px;
 }
 
 .preview-tile {

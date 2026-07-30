@@ -13,6 +13,9 @@ test("persists bounded download history and clears local data", () => {
     const data = new AppData(directory);
     data.addHistory({ id: "one", state: "completed" });
     assert.equal(new AppData(directory).getHistory()[0].id, "one");
+    data.addHistory({ fingerprint: "same", id: "two", state: "completed" });
+    assert.equal(data.hasFingerprint("same"), true);
+    assert.equal(data.hasFingerprint("different"), false);
     data.log("info", "test", { url: "https://example.com/video?token=secret" });
     assert.equal(
       fs.readFileSync(data.logPath, "utf8").includes("secret"),

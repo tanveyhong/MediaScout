@@ -1,6 +1,6 @@
 {
   "name": "media-scout",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Detect and save authorized direct media files from an in-app browser.",
   "main": "src/main.js",
   "author": "Independent Developer",
@@ -9,16 +9,20 @@
     "start": "electron .",
     "dev": "electron .",
     "test": "node --test",
+    "test:e2e": "playwright test",
     "test:local": "node scripts/run-local-fixture.js",
     "lint": "eslint src scripts test browser-extension",
     "format": "prettier --write \"{src,scripts,test,browser-extension}/**/*.{js,css,html,json}\" \"*.{json,md,yaml}\"",
     "format:check": "prettier --check \"{src,scripts,test,browser-extension}/**/*.{js,css,html,json}\" \"*.{json,md,yaml}\"",
     "verify": "node scripts/verify.js",
     "pack": "electron-builder --dir",
+    "pack:extension": "node scripts/package-extension.js",
     "release:ci": "electron-builder --win nsis --publish never",
     "release": "node scripts/release.js"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
+    "archiver": "^8.0.0",
     "electron": "^43.2.0",
     "electron-builder": "^26.0.12",
     "eslint": "^9.32.0",

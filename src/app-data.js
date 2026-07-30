@@ -46,6 +46,13 @@ class AppData {
     return this.history.map((entry) => ({ ...entry }));
   }
 
+  hasFingerprint(fingerprint) {
+    return Boolean(
+      fingerprint &&
+      this.history.some((entry) => entry.fingerprint === fingerprint),
+    );
+  }
+
   clearHistory() {
     this.history = [];
     writeJson(this.historyPath, this.history);
