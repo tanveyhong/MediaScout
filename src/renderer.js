@@ -80,6 +80,7 @@ const downloadQueueList = document.querySelector("#downloadQueueList");
 const pauseAllDownloadsButton = document.querySelector("#pauseAllDownloads");
 const preferenceInputs = {
   audioOnly: document.querySelector("#audioOnly"),
+  authorizedDomains: document.querySelector("#authorizedDomains"),
   clipboardMonitoring: document.querySelector("#clipboardMonitoring"),
   closeBehavior: document.querySelector("#closeBehavior"),
   concurrentDownloads: document.querySelector("#concurrentDownloads"),
@@ -608,7 +609,9 @@ for (const [key, input] of Object.entries(preferenceInputs)) {
     const value =
       input.type === "checkbox"
         ? input.checked
-        : ["closeBehavior", "filenameTemplate"].includes(key)
+        : ["authorizedDomains", "closeBehavior", "filenameTemplate"].includes(
+              key,
+            )
           ? input.value
           : Number(input.value);
     await window.mediaScout.updatePreferences({ [key]: value });
