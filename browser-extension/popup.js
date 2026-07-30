@@ -10,7 +10,14 @@ function showStatus(online, message) {
   statusText.textContent = message;
 }
 
-fetch("http://127.0.0.1:48731/status")
+chrome.storage.local
+  .get("pairingCode")
+  .then(({ pairingCode: savedCode = "" }) =>
+    fetch("http://127.0.0.1:48731/status", {
+      cache: "no-store",
+      headers: savedCode ? { "X-Media-Scout-Pairing": savedCode } : undefined,
+    }),
+  )
   .then(async (response) => ({
     ok: response.ok,
     payload: await response.json(),

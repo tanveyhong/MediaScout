@@ -133,6 +133,29 @@ test("requires the desktop pairing code when configured", async () => {
   }
 });
 
+test("reconnects a companion from its saved pairing code after restart", async () => {
+  const server = startCaptureBridge(
+    () => {},
+    0,
+    () => ({}),
+    { pairingCode: "123456" },
+  );
+  await new Promise((resolve) => server.once("listening", resolve));
+  const { port } = server.address();
+  try {
+    const status = await fetch(`http://127.0.0.1:${port}/status`, {
+      headers: {
+        Origin: "chrome-extension://trustedcompanion",
+        "X-Media-Scout-Pairing": "123456",
+      },
+    });
+    assert.equal(status.status, 200);
+    assert.equal((await status.json()).paired, true);
+  } finally {
+    server.shutdown();
+  }
+});
+
 test("rejects oversized capture payloads without resolving them", async () => {
   let captures = 0;
   const server = startCaptureBridge(() => {
