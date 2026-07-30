@@ -39,6 +39,22 @@ function genericProviderFor(rawUrl, authorizedDomains = []) {
   const parsed = parseHttpUrl(rawUrl);
   if (!parsed) return null;
   const host = parsed.hostname.toLowerCase();
+  if (
+    ["reanime.to", "www.reanime.to"].includes(host) &&
+    /^\/watch\/[^/]+\/?$/i.test(parsed.pathname) &&
+    /^\d+$/.test(parsed.searchParams.get("ep") || "")
+  ) {
+    return { id: "reanime", url: parsed.href };
+  }
+  if (
+    ["nnyy.in", "www.nnyy.in"].includes(host) &&
+    /^\/dianying\/\d+\.html$/i.test(parsed.pathname)
+  ) {
+    parsed.hostname = "nnyy.in";
+    parsed.search = "";
+    parsed.hash = "";
+    return { id: "nnyy", url: parsed.href };
+  }
   const publicContentHost = PUBLIC_CONTENT_DOMAINS.some((domain) =>
     hostMatches(host, domain),
   );
@@ -67,6 +83,14 @@ function genericProviderFor(rawUrl, authorizedDomains = []) {
 }
 
 const PROVIDERS = Object.freeze([
+  {
+    description: "Re:ANIME watch pages backed by FlixCloud",
+    id: "reanime",
+  },
+  {
+    description: "Public movie pages on nnyy.in",
+    id: "nnyy",
+  },
   {
     description: "Complete HTTP(S) audio and video files",
     id: "direct-media",

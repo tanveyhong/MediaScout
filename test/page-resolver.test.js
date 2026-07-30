@@ -145,6 +145,40 @@ test("resolves complete direct media URLs", async () => {
   assert.equal(result.candidateSizes[url], 2048);
 });
 
+test("resolves nnyy.in movie pages through the public media endpoint", async () => {
+  const playlist = "https://vip.lz-cdn3.com/20221110/15741_e35bb863/index.m3u8";
+  const requests = [];
+  const result = await resolvePublicPage(
+    "https://nnyy.in/dianying/20168832.html",
+    {
+      fetchImpl: async (url, options) => {
+        requests.push({ options, url });
+        return {
+          json: async () => ({
+            video_plays: [
+              { play_data: playlist },
+              { play_data: "https://media.example/movie.mp4" },
+            ],
+          }),
+          ok: true,
+        };
+      },
+    },
+  );
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://nnyy.in/_gp/20168832/hd");
+  assert.equal(
+    requests[0].options.headers.Referer,
+    "https://nnyy.in/dianying/20168832.html",
+  );
+  assert.deepEqual(result.candidates, [playlist]);
+  assert.equal(
+    result.candidateTypes[playlist],
+    "application/vnd.apple.mpegurl",
+  );
+  assert.equal(result.provider, "nnyy");
+});
+
 test("resolves complete media metadata on an authorized domain", async () => {
   const result = await resolvePublicPage(
     "https://media.owner.example/watch/demo",

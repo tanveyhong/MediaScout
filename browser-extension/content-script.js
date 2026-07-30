@@ -1,22 +1,51 @@
 "use strict";
 
 let lastReportedPage = "";
+const capturedManifests = new Map();
 
-function recentNetworkMediaUrl() {
+window.addEventListener("message", (event) => {
+  if (
+    event.source !== window ||
+    event.origin !== location.origin ||
+    event.data?.type !== "media-scout-flix-manifest" ||
+    !/^https?:/i.test(event.data.sourceUrl || "") ||
+    !/^\s*#EXTM3U/i.test(event.data.manifestText || "")
+  ) {
+    return;
+  }
+  capturedManifests.set(event.data.sourceUrl, event.data.manifestText);
+  while (capturedManifests.size > 8) {
+    capturedManifests.delete(capturedManifests.keys().next().value);
+  }
+  reportPlayingMedia(true);
+});
+
+function recentNetworkMediaUrls() {
+  const flixFrame = /(?:^|\.)flixcloud\.cc$/i.test(location.hostname);
   const mediaHosts = /(?:douyinvod|bytecdn|bytefcdn|amemv|snssdk|pstatp)\./i;
-  return (
-    [...performance.getEntriesByType("resource")]
-      .reverse()
-      .filter(
-        (entry) =>
-          entry.initiatorType === "video" ||
-          /(?:\.mp4(?:[?#]|$)|mime_type=video|video_id=|douyinvod)/i.test(
-            entry.name,
-          ),
-      )
-      .map((entry) => entry.name)
-      .find((url) => /^https?:/i.test(url) && mediaHosts.test(url)) || ""
-  );
+  return [...performance.getEntriesByType("resource")]
+    .reverse()
+    .filter(
+      (entry) =>
+        entry.initiatorType === "video" ||
+        /(?:\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$)|\.mp4(?:[?#]|$)|mime_type=video|video_id=|douyinvod)/i.test(
+          entry.name,
+        ),
+    )
+    .map((entry) => entry.name)
+    .filter(
+      (url) => /^https?:/i.test(url) && (flixFrame || mediaHosts.test(url)),
+    )
+    .filter((url, index, all) => index === all.indexOf(url))
+    .sort((left, right) => {
+      const score = (url) => {
+        if (/\/audio\//i.test(url)) return -100;
+        if (/(?:master|index|playlist|video)/i.test(url)) return 100;
+        return 0;
+      };
+      return score(right) - score(left);
+    })
+    .slice(0, 16);
 }
 
 function absoluteUrl(value) {
@@ -60,14 +89,35 @@ function findThumbnail(media) {
   return absoluteUrl(nearby?.currentSrc || nearby?.src || "");
 }
 
-function currentMediaPayload() {
+async function currentMediaPayload() {
   const media = targetMedia();
   if (!media) return null;
+  const mediaCandidates = recentNetworkMediaUrls();
+  const mediaUrl = /^https?:/i.test(media.currentSrc || media.src || "")
+    ? media.currentSrc || media.src
+    : mediaCandidates[0] || "";
+  let manifestText = capturedManifests.get(mediaUrl) || "";
+  if (
+    /(?:^|\.)flixcloud\.cc$/i.test(location.hostname) &&
+    /\.m3u8(?:$|[?#])/i.test(mediaUrl)
+  ) {
+    try {
+      const response = await fetch(mediaUrl, {
+        cache: "no-store",
+        credentials: "include",
+        signal: AbortSignal.timeout(3_000),
+      });
+      const text = response.ok ? await response.text() : "";
+      if (!manifestText && /^\s*#EXTM3U/i.test(text)) manifestText = text;
+    } catch {
+      // The bridge can still try the captured URL when the iframe fetch expires.
+    }
+  }
   return {
-    mediaUrl: /^https?:/i.test(media.currentSrc || media.src || "")
-      ? media.currentSrc || media.src
-      : recentNetworkMediaUrl(),
+    manifestText,
+    mediaUrl,
     pageUrl: location.href,
+    mediaCandidates,
     thumbnail: findThumbnail(media),
     title:
       document.querySelector('meta[property="og:title"]')?.content ||
@@ -98,7 +148,7 @@ function targetMedia() {
     .sort((left, right) => right.visibleArea - left.visibleArea)[0]?.item;
 }
 
-function reportPlayingMedia(force = false) {
+async function reportPlayingMedia(force = false) {
   const media = targetMedia();
   const playingMedia =
     media && !media.paused && !media.ended && media.readyState > 1;
@@ -107,7 +157,7 @@ function reportPlayingMedia(force = false) {
   if (!force && lastReportedPage === location.href) return;
   lastReportedPage = location.href;
   chrome.runtime
-    .sendMessage({ ...currentMediaPayload(), type: "media-played" })
+    .sendMessage({ ...(await currentMediaPayload()), type: "media-played" })
     .catch(() => {});
 }
 
@@ -121,28 +171,31 @@ document.addEventListener(
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "capture-now") {
-    const media = targetMedia();
-    if (message.autoplay && media?.paused) {
-      media.muted = true;
-      media.play().catch(() => {
-        const rect = media.getBoundingClientRect();
-        media.dispatchEvent(
-          new MouseEvent("click", {
-            bubbles: true,
-            clientX: rect.left + rect.width / 2,
-            clientY: rect.top + rect.height / 2,
-            view: window,
-          }),
-        );
-      });
-    }
-    const payload = currentMediaPayload();
-    if (payload) {
-      chrome.runtime
-        .sendMessage({ ...payload, type: "media-played" })
-        .catch(() => {});
-    }
-    sendResponse(payload || {});
+    (async () => {
+      const media = targetMedia();
+      if (message.autoplay && media?.paused) {
+        media.muted = true;
+        media.play().catch(() => {
+          const rect = media.getBoundingClientRect();
+          media.dispatchEvent(
+            new MouseEvent("click", {
+              bubbles: true,
+              clientX: rect.left + rect.width / 2,
+              clientY: rect.top + rect.height / 2,
+              view: window,
+            }),
+          );
+        });
+      }
+      const payload = await currentMediaPayload();
+      if (payload) {
+        chrome.runtime
+          .sendMessage({ ...payload, type: "media-played" })
+          .catch(() => {});
+      }
+      sendResponse(payload || {});
+    })();
+    return true;
   }
 });
 

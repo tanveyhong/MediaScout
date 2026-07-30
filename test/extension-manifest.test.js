@@ -22,6 +22,16 @@ test("extension access is limited to supported sites and the local bridge", () =
     false,
   );
   assert.ok(manifest.host_permissions.includes("http://127.0.0.1:48731/*"));
+  assert.ok(manifest.host_permissions.includes("https://*.flixcloud.cc/*"));
+  assert.ok(
+    manifest.content_scripts.some(
+      (script) =>
+        script.world === "MAIN" &&
+        script.run_at === "document_start" &&
+        script.all_frames &&
+        script.js.includes("player-hook.js"),
+    ),
+  );
 });
 
 test("packaged builds expose the companion outside the ASAR archive", () => {

@@ -5,14 +5,16 @@ const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { Readable } = require("node:stream");
 const ffmpegPath = require("ffmpeg-static");
-const { parseHttpUrl } = require("./policy");
+const { classifyMedia, parseHttpUrl } = require("./policy");
 const { resolvePublicPage } = require("./page-resolver");
+const { decodePlaylist, decodeSegment } = require("./reanime-resolver");
 
 const DEFAULT_BRIDGE_PORT = 48_731;
 const ALLOWED_EXTENSION_ORIGINS =
   /^(chrome-extension|moz-extension):\/\/[a-z0-9-]+$/i;
 const PROXY_TTL_MS = 30 * 60 * 1000;
-const MAX_MEDIA_PROXIES = 200;
+const MAX_MEDIA_PROXIES = 5_000;
+const MAX_CAPTURE_PAYLOAD = 1024 * 1024;
 
 function isAllowedOrigin(origin) {
   return ALLOWED_EXTENSION_ORIGINS.test(String(origin || ""));
@@ -71,6 +73,38 @@ function json(response, status, body, origin = "") {
   response.end(JSON.stringify(body));
 }
 
+function subtitleTimestamp(value) {
+  const match = String(value)
+    .trim()
+    .match(/^(\d+):(\d{2}):(\d{2})[.,](\d+)$/);
+  if (!match) return value;
+  return `${match[1].padStart(2, "0")}:${match[2]}:${match[3]}.${match[4].padEnd(3, "0").slice(0, 3)}`;
+}
+
+function subtitleToVtt(source, format = "") {
+  if (/^webvtt/i.test(source.trim())) return source;
+  if (format === "ass" || /^\s*\[Script Info\]/i.test(source)) {
+    const cues = [];
+    for (const line of source.split(/\r?\n/)) {
+      if (!line.startsWith("Dialogue:")) continue;
+      const fields = line.slice(9).split(",");
+      if (fields.length < 10) continue;
+      const start = subtitleTimestamp(fields[1]);
+      const end = subtitleTimestamp(fields[2]);
+      const text = fields
+        .slice(9)
+        .join(",")
+        .replace(/\{[^}]*\}/g, "")
+        .replace(/\\N/gi, "\n")
+        .replace(/\\h/gi, " ")
+        .trim();
+      if (text) cues.push(`${start} --> ${end}\n${text}`);
+    }
+    return `WEBVTT\n\n${cues.join("\n\n")}\n`;
+  }
+  return `WEBVTT\n\n${source.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2")}`;
+}
+
 function startCaptureBridge(
   onCapture,
   port = DEFAULT_BRIDGE_PORT,
@@ -81,6 +115,9 @@ function startCaptureBridge(
   const mediaProxies = new Map();
   const sockets = new Set();
   const proxyTtlMs = bridgeOptions.proxyTtlMs || PROXY_TTL_MS;
+  const probeMediaImpl = bridgeOptions.probeMedia || probeMedia;
+  const resolvePublicPageImpl =
+    bridgeOptions.resolvePublicPage || resolvePublicPage;
   const pairingCode = String(bridgeOptions.pairingCode || "");
   let pairedOrigin = "";
   const extensionAuthorized = (origin, request) => {
@@ -108,8 +145,155 @@ function startCaptureBridge(
     const origin = request.headers.origin || "";
     pruneMediaProxies();
     const proxyMatch = request.url?.match(
-      /^\/media\/([a-f0-9-]+)\/(?:video\.mp4|audio\.m4a)$/i,
+      /^\/(?:media|resource)\/([a-f0-9-]+)\/[^/?]+$/i,
     );
+    const manifestMatch = request.url?.match(
+      /^\/manifest\/([a-f0-9-]+)\/index\.m3u8$/i,
+    );
+    const subtitleMatch = request.url?.match(
+      /^\/subtitle\/([a-f0-9-]+)\/subtitle\.vtt$/i,
+    );
+
+    if (
+      (request.method === "GET" || request.method === "HEAD") &&
+      subtitleMatch
+    ) {
+      const subtitle = mediaProxies.get(subtitleMatch[1]);
+      if (!subtitle?.subtitleUrl) {
+        json(response, 404, { ok: false, message: "Subtitle expired." });
+        return;
+      }
+      fetch(subtitle.subtitleUrl, {
+        headers: {
+          Origin: "https://flixcloud.cc",
+          Referer: "https://flixcloud.cc/",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36",
+        },
+        method: request.method,
+      })
+        .then(async (upstream) => {
+          if (!upstream.ok) {
+            throw new Error(`Subtitle returned HTTP ${upstream.status}.`);
+          }
+          const vtt =
+            request.method === "HEAD"
+              ? ""
+              : subtitleToVtt(await upstream.text(), subtitle.format);
+          response.writeHead(200, {
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control": "no-store",
+            "Content-Type": "text/vtt; charset=utf-8",
+          });
+          response.end(vtt);
+        })
+        .catch(() => {
+          if (!response.headersSent) {
+            json(response, 502, {
+              ok: false,
+              message: "Unable to fetch the subtitle.",
+            });
+          }
+        });
+      return;
+    }
+
+    if (
+      (request.method === "GET" || request.method === "HEAD") &&
+      manifestMatch
+    ) {
+      const manifest = mediaProxies.get(manifestMatch[1]);
+      if (!manifest?.manifestText && !manifest?.manifestUrl) {
+        json(response, 404, { ok: false, message: "Manifest expired." });
+        return;
+      }
+      const sendManifest = (manifestText) => {
+        response.writeHead(200, {
+          "Cache-Control": "no-store",
+          "Content-Type": "application/vnd.apple.mpegurl",
+        });
+        response.end(request.method === "HEAD" ? "" : manifestText);
+      };
+      if (manifest.manifestText) {
+        sendManifest(manifest.manifestText);
+        return;
+      }
+      fetch(manifest.manifestUrl, {
+        headers: {
+          Origin: "https://flixcloud.cc",
+          Referer: "https://flixcloud.cc/",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/136.0.0.0 Safari/537.36",
+        },
+        method: request.method,
+      })
+        .then(async (upstream) => {
+          if (!upstream.ok) {
+            throw new Error(`Playlist returned HTTP ${upstream.status}.`);
+          }
+          if (request.method === "HEAD") {
+            sendManifest("");
+            return;
+          }
+          const decoded = decodePlaylist(
+            await upstream.text(),
+            manifest.playlistKey,
+          );
+          const localizePlaylist = (value) => {
+            const absolute = new URL(value, manifest.manifestUrl).href;
+            const token = crypto.randomUUID();
+            if (/\.m3u8(?:$|[?#])/i.test(absolute)) {
+              mediaProxies.set(token, {
+                createdAt: Date.now(),
+                manifestUrl: absolute,
+                playlistKey: manifest.playlistKey,
+              });
+              return (
+                `http://127.0.0.1:${server.address().port}` +
+                `/manifest/${token}/index.m3u8`
+              );
+            }
+            mediaProxies.set(token, {
+              createdAt: Date.now(),
+              decodeSegment: true,
+              pageUrl: "https://flixcloud.cc/",
+              url: absolute,
+            });
+            const filename =
+              new URL(absolute).pathname.split("/").pop() || "resource.bin";
+            return (
+              `http://127.0.0.1:${server.address().port}` +
+              `/resource/${token}/${encodeURIComponent(filename)}`
+            );
+          };
+          const rewritten = decoded
+            .replace(
+              /URI="([^"]+)"/g,
+              (_match, value) => `URI="${localizePlaylist(value)}"`,
+            )
+            .split(/\r?\n/)
+            .map((line) =>
+              line && !line.startsWith("#") ? localizePlaylist(line) : line,
+            )
+            .join("\n");
+          sendManifest(rewritten);
+        })
+        .catch((error) => {
+          bridgeOptions.log?.("error", "flixcloud-manifest-proxy-failed", {
+            message: error?.message || String(error),
+          });
+          if (!response.headersSent) {
+            json(response, 502, {
+              ok: false,
+              message: "Unable to decode the FlixCloud playlist.",
+            });
+          }
+        });
+      return;
+    }
 
     if ((request.method === "GET" || request.method === "HEAD") && proxyMatch) {
       const proxy = mediaProxies.get(proxyMatch[1]);
@@ -124,6 +308,9 @@ function startCaptureBridge(
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
           "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
       };
+      if (proxy.pageUrl === "https://flixcloud.cc/") {
+        headers.Origin = "https://flixcloud.cc";
+      }
       if (request.headers.range) headers.Range = request.headers.range;
       const controller = new AbortController();
       request.once("aborted", () => controller.abort());
@@ -135,7 +322,20 @@ function startCaptureBridge(
         method: request.method,
         signal: controller.signal,
       })
-        .then((upstream) => {
+        .then(async (upstream) => {
+          if (proxy.decodeSegment && request.method !== "HEAD") {
+            if (!upstream.ok) {
+              throw new Error(`Segment returned HTTP ${upstream.status}.`);
+            }
+            const decoded = decodeSegment(await upstream.arrayBuffer());
+            response.writeHead(upstream.status, {
+              "Cache-Control": "no-store",
+              "Content-Length": decoded.length,
+              "Content-Type": "application/octet-stream",
+            });
+            response.end(decoded);
+            return;
+          }
           const forwarded = {};
           for (const name of [
             "accept-ranges",
@@ -257,7 +457,7 @@ function startCaptureBridge(
     request.on("data", (chunk) => {
       if (tooLarge) return;
       raw += chunk;
-      if (raw.length > 32_768) {
+      if (raw.length > MAX_CAPTURE_PAYLOAD) {
         raw = "";
         tooLarge = true;
       }
@@ -274,6 +474,11 @@ function startCaptureBridge(
           return;
         }
         const payload = JSON.parse(raw);
+        bridgeOptions.log?.("info", "bridge-resolve-received", {
+          hasManifest: /^\s*#EXTM3U/i.test(String(payload.manifestText || "")),
+          mediaUrl: String(payload.mediaUrl || ""),
+          pageUrl: String(payload.pageUrl || ""),
+        });
         const page = parseHttpUrl(payload.pageUrl);
         const mediaHint = parseHttpUrl(payload.mediaUrl);
         const isDouyinPage =
@@ -285,8 +490,14 @@ function startCaptureBridge(
           isDouyinPage &&
           mediaHint &&
           !["blob:", "data:"].includes(mediaHint.protocol);
-        let selectedDouyinMedia = null;
-        if (usableDouyinHint) {
+        const isReanimePage =
+          page && /(?:^|\.)reanime\.to$/i.test(page.hostname);
+        const usableCapturedHint =
+          usableDouyinHint &&
+          mediaHint &&
+          !["blob:", "data:"].includes(mediaHint.protocol);
+        let selectedCapturedMedia = null;
+        if (usableCapturedHint) {
           const candidates = [
             mediaHint.href,
             ...(Array.isArray(payload.mediaCandidates)
@@ -299,9 +510,9 @@ function startCaptureBridge(
             .filter((url, index, all) => index === all.indexOf(url))
             .slice(0, 16);
           const probes = await Promise.all(
-            candidates.map((url) => probeMedia(url, page.href)),
+            candidates.map((url) => probeMediaImpl(url, page.href)),
           );
-          selectedDouyinMedia =
+          selectedCapturedMedia =
             probes.find(
               (probe) =>
                 /^(?:h264|avc)/i.test(probe.videoCodec) && probe.audioCodec,
@@ -310,42 +521,128 @@ function startCaptureBridge(
             probes.find((probe) => /^(?:h264|avc)/i.test(probe.videoCodec)) ||
             probes.find((probe) => probe.videoCodec) ||
             null;
+          if (!selectedCapturedMedia && isReanimePage) {
+            const hlsUrl = candidates.find((url) => classifyMedia(url).isHls);
+            if (hlsUrl) {
+              selectedCapturedMedia = {
+                audioCodec: "",
+                duration: "",
+                url: hlsUrl,
+                videoCodec: "",
+              };
+            }
+          }
           const separateAudio =
-            selectedDouyinMedia && !selectedDouyinMedia.audioCodec
+            selectedCapturedMedia && !selectedCapturedMedia.audioCodec
               ? probes.find((probe) => !probe.videoCodec && probe.audioCodec)
               : null;
-          if (selectedDouyinMedia && separateAudio) {
-            selectedDouyinMedia.audioSourceUrl = separateAudio.url;
-            selectedDouyinMedia.audioCodec = separateAudio.audioCodec;
+          if (selectedCapturedMedia && separateAudio) {
+            selectedCapturedMedia.audioSourceUrl = separateAudio.url;
+            selectedCapturedMedia.audioCodec = separateAudio.audioCodec;
           }
         }
         let resolverOptions;
         let resolved;
         try {
-          resolverOptions = usableDouyinHint
+          resolverOptions = usableCapturedHint
             ? {}
             : await getResolverOptions(payload.pageUrl);
-          resolved = usableDouyinHint
+          resolved = usableCapturedHint
             ? {
-                analysis: selectedDouyinMedia,
-                candidates: selectedDouyinMedia
-                  ? [selectedDouyinMedia.url]
+                analysis: selectedCapturedMedia,
+                candidateTypes:
+                  selectedCapturedMedia &&
+                  /\.m3u8(?:$|[?#])/i.test(selectedCapturedMedia.url)
+                    ? {
+                        [selectedCapturedMedia.url]:
+                          "application/vnd.apple.mpegurl",
+                      }
+                    : {},
+                candidates: selectedCapturedMedia
+                  ? [selectedCapturedMedia.url]
                   : [],
-                ok: Boolean(selectedDouyinMedia),
+                ok: Boolean(selectedCapturedMedia),
                 pageUrl: page.href,
                 thumbnail: String(payload.thumbnail || ""),
                 title: String(payload.title || ""),
-                reason: selectedDouyinMedia
+                reason: selectedCapturedMedia
                   ? ""
-                  : "Douyin exposed audio-only or unreadable media.",
+                  : isReanimePage
+                    ? "FlixCloud exposed no readable HLS media."
+                    : "Douyin exposed audio-only or unreadable media.",
               }
-            : await resolvePublicPage(payload.pageUrl, resolverOptions);
+            : await resolvePublicPageImpl(payload.pageUrl, resolverOptions);
+          if (
+            resolved.ok &&
+            isReanimePage &&
+            selectedCapturedMedia &&
+            /^\s*#EXTM3U/i.test(String(payload.manifestText || ""))
+          ) {
+            const sourceUrl = selectedCapturedMedia.url;
+            const absoluteManifest = String(payload.manifestText)
+              .replace(
+                /URI="([^"]+)"/g,
+                (_match, value) => `URI="${new URL(value, sourceUrl).href}"`,
+              )
+              .split(/\r?\n/)
+              .map((line) =>
+                line && !line.startsWith("#")
+                  ? new URL(line, sourceUrl).href
+                  : line,
+              )
+              .join("\n");
+            const token = crypto.randomUUID();
+            mediaProxies.set(token, {
+              createdAt: Date.now(),
+              manifestText: absoluteManifest,
+            });
+            const localManifest =
+              `http://127.0.0.1:${server.address().port}` +
+              `/manifest/${token}/index.m3u8`;
+            resolved.candidates = [localManifest];
+            resolved.candidateTypes = {
+              [localManifest]: "application/vnd.apple.mpegurl",
+            };
+          }
         } finally {
           resolverOptions?.dispose?.();
         }
         if (!resolved.ok) {
           json(response, 422, resolved, origin);
           return;
+        }
+        if (
+          resolved.provider === "reanime" &&
+          resolved.playlistKey &&
+          resolved.candidates[0]
+        ) {
+          const token = crypto.randomUUID();
+          mediaProxies.set(token, {
+            createdAt: Date.now(),
+            manifestUrl: resolved.candidates[0],
+            playlistKey: resolved.playlistKey,
+          });
+          const localManifest =
+            `http://127.0.0.1:${server.address().port}` +
+            `/manifest/${token}/index.m3u8`;
+          resolved.candidates = [localManifest];
+          resolved.candidateTypes = {
+            [localManifest]: "application/vnd.apple.mpegurl",
+          };
+          resolved.subtitles = (resolved.subtitles || []).map((subtitle) => {
+            const subtitleToken = crypto.randomUUID();
+            mediaProxies.set(subtitleToken, {
+              createdAt: Date.now(),
+              format: subtitle.format,
+              subtitleUrl: subtitle.url,
+            });
+            return {
+              ...subtitle,
+              url:
+                `http://127.0.0.1:${server.address().port}` +
+                `/subtitle/${subtitleToken}/subtitle.vtt`,
+            };
+          });
         }
         for (const url of resolved.candidates.slice(0, 1)) {
           const parsed = parseHttpUrl(url);
@@ -386,17 +683,23 @@ function startCaptureBridge(
               delete resolved.analysis.audioSourceUrl;
             }
           }
+          const mediaType =
+            resolved.candidateTypes?.[parsed.href] || "video/mp4";
+          const isHls =
+            mediaType === "application/vnd.apple.mpegurl" ||
+            /\.m3u8(?:$|[?#])/i.test(parsed.href);
           onCapture({
             allowed: true,
             analysis: resolved.analysis || null,
             detectedAt: new Date().toISOString(),
-            extension: ".mp4",
+            extension: isHls ? ".m3u8" : ".mp4",
             hostname: parsed.hostname,
-            mime: "video/mp4",
+            mime: isHls ? "application/vnd.apple.mpegurl" : "video/mp4",
             pageHost: new URL(resolved.pageUrl).hostname,
             pageUrl: resolved.pageUrl,
             size: resolved.candidateSizes?.[parsed.href] || 0,
             source: "Public page resolver",
+            subtitles: resolved.subtitles || [],
             thumbnail: resolved.thumbnail || "",
             title: resolved.title || "",
             variants: deliveredVariants,

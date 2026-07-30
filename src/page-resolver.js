@@ -5,6 +5,7 @@ const { execFile } = require("node:child_process");
 const { unpackedBinaryPath } = require("./binary-path");
 const { classifyMedia, parseHttpUrl } = require("./policy");
 const { genericProviderFor } = require("./provider-registry");
+const { resolveReanimePage } = require("./reanime-resolver");
 
 const YT_DLP_PATH = unpackedBinaryPath(
   path.join(
@@ -187,6 +188,12 @@ async function resolvePublicPage(rawUrl, options = {}) {
   if (genericProvider?.id === "direct-media") {
     return resolveDirectMedia(pageUrl, fetchImpl);
   }
+  if (genericProvider?.id === "nnyy") {
+    return resolveNnyyPage(pageUrl, fetchImpl);
+  }
+  if (genericProvider?.id === "reanime") {
+    return resolveReanimePage(pageUrl, fetchImpl);
+  }
   const pageHost = new URL(pageUrl).hostname;
   if (
     genericProvider?.id === "public-content" &&
@@ -314,6 +321,68 @@ async function resolveDirectMedia(url, fetchImpl) {
     pageUrl: url,
     provider: "direct-media",
     title: decodeURIComponent(path.basename(new URL(url).pathname)),
+  };
+}
+
+async function resolveNnyyPage(pageUrl, fetchImpl) {
+  const parsed = new URL(pageUrl);
+  const movieId = parsed.pathname.match(/^\/dianying\/(\d+)\.html$/i)?.[1];
+  if (!movieId) {
+    return { ok: false, reason: "This nnyy.in movie URL is invalid." };
+  }
+  const endpoint = `https://nnyy.in/_gp/${encodeURIComponent(movieId)}/hd`;
+  let response;
+  try {
+    response = await fetchImpl(endpoint, {
+      headers: {
+        Accept: "application/json",
+        Referer: pageUrl,
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    return { ok: false, reason: "The nnyy.in media endpoint is unavailable." };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      reason: `The nnyy.in media endpoint returned HTTP ${response.status}.`,
+    };
+  }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      reason: "The nnyy.in media endpoint returned invalid JSON.",
+    };
+  }
+  const candidates = [
+    ...new Set(
+      (Array.isArray(payload?.video_plays) ? payload.video_plays : [])
+        .map((entry) => String(entry?.play_data || "").trim())
+        .filter((url) => classifyMedia(url).isHls),
+    ),
+  ];
+  if (!candidates.length) {
+    return {
+      ok: false,
+      reason: "This nnyy.in movie exposes no supported HLS playlist.",
+    };
+  }
+  return {
+    candidateTypes: Object.fromEntries(
+      candidates.map((url) => [url, "application/vnd.apple.mpegurl"]),
+    ),
+    candidates,
+    ok: true,
+    pageUrl,
+    provider: "nnyy",
+    title: `nnyy.in movie ${movieId}`,
   };
 }
 

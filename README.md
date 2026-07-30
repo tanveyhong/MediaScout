@@ -20,7 +20,8 @@ audio/video preview before its link is copied or the file is saved.
 - Optional system-tray background mode and launch-with-Windows support.
 - Store-ready browser companion ZIP packaging and automated Electron restart smoke tests.
 - Provider adapters for complete direct media URLs, Internet Archive, Wikimedia,
-  and metadata-only resolution on explicitly authorized user-owned domains.
+  public `nnyy.in` movie pages, and metadata-only resolution on explicitly
+  authorized user-owned domains.
 - Local diagnostics, sanitized rotating logs, incomplete-download cleanup, and privacy controls.
 - Packaged-build update checks backed by GitHub Releases.
 

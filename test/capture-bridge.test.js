@@ -171,7 +171,7 @@ test("rejects oversized capture payloads without resolving them", async () => {
         Origin: "chrome-extension://trustedcompanion",
       },
       body: JSON.stringify({
-        pageUrl: `https://example.com/${"x".repeat(40_000)}`,
+        pageUrl: `https://example.com/${"x".repeat(1_100_000)}`,
       }),
     });
     assert.equal(response.status, 413);
@@ -197,4 +197,54 @@ test("shutdown destroys active bridge connections", async () => {
 
   assert.equal(socket.destroyed, true);
   assert.equal(server.listening, false);
+});
+
+test("accepts the HLS request behind a FlixCloud blob player", async () => {
+  const captures = [];
+  const playlist = "https://media.example/episode/master.m3u8?token=test";
+  const server = startCaptureBridge(
+    (capture) => captures.push(capture),
+    0,
+    () => ({}),
+    {
+      probeMedia: async (url) => ({
+        audioCodec: "",
+        url,
+        videoCodec: "",
+      }),
+      resolvePublicPage: async (pageUrl) => ({
+        candidateTypes: {
+          [playlist]: "application/vnd.apple.mpegurl",
+        },
+        candidates: [playlist],
+        ok: true,
+        pageUrl,
+        title: "Episode 12",
+      }),
+    },
+  );
+  await new Promise((resolve) => server.once("listening", resolve));
+  const { port } = server.address();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/resolve`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "chrome-extension://trustedcompanion",
+      },
+      body: JSON.stringify({
+        mediaUrl: playlist,
+        pageUrl: "https://reanime.to/watch/199221/12",
+        title: "Episode 12",
+      }),
+    });
+    assert.equal(response.status, 202);
+    assert.equal(captures.length, 1);
+    assert.equal(captures[0].url, playlist);
+    assert.equal(captures[0].extension, ".m3u8");
+    assert.equal(captures[0].mime, "application/vnd.apple.mpegurl");
+    assert.equal(captures[0].pageHost, "reanime.to");
+  } finally {
+    server.shutdown();
+  }
 });
