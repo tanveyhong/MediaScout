@@ -30,7 +30,7 @@ const builder = path.join(
   ".bin",
   process.platform === "win32" ? "electron-builder.cmd" : "electron-builder"
 );
-const release = spawnSync(builder, ["--win", "nsis"], {
+const release = spawnSync(builder, ["--win", "nsis", "--publish", "never"], {
   cwd: projectRoot,
   shell: process.platform === "win32",
   stdio: "inherit"
