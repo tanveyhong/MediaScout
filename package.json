@@ -1,6 +1,7 @@
 {
   "name": "media-scout",
-  "version": "0.7.3",
+  "productName": "Media Scout",
+  "version": "0.7.4",
   "description": "Detect and save authorized direct media files from an in-app browser.",
   "main": "src/main.js",
   "author": "Independent Developer",

@@ -35,11 +35,12 @@ const { DEFAULT_BRIDGE_PORT, startCaptureBridge } = require("./capture-bridge");
 const MEDIA_PARTITION = "persist:media-scout";
 const DEFAULT_START_URL = "https://archive.org/";
 const APP_ID = "com.independent.mediascout";
+const APP_NAME = "Media Scout";
 const APP_ICON_PATH = path.resolve(
   __dirname,
   "..",
   "assets",
-  "media-scout-logo.png",
+  process.platform === "win32" ? "media-scout.ico" : "media-scout-logo.png",
 );
 let pairingCode = "";
 let encryptedPairingCode = "";
@@ -95,6 +96,7 @@ const ytDlpPath = unpackedBinaryPath(
   ),
 );
 
+app.setName(APP_NAME);
 app.setAppUserModelId(APP_ID);
 
 function loadAppIcon() {
