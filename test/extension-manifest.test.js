@@ -48,17 +48,16 @@ test("desktop pairing is persisted with Electron safe storage", () => {
   assert.doesNotMatch(mainSource, /pairingCode:\s*pairingCode/);
 });
 
-test("the desktop window uses the packaged Media Scout icon", () => {
+test("the desktop window and tray use the runtime Media Scout icon", () => {
   const mainSource = fs.readFileSync(
     path.join(__dirname, "..", "src", "main.js"),
     "utf8",
   );
+  assert.match(mainSource, /"media-scout-logo\.png"/);
+  assert.match(mainSource, /icon:\s*appIcon/);
+  assert.match(mainSource, /mainWindow\.setIcon\(appIcon\)/);
   assert.match(
     mainSource,
-    /icon:\s*path\.resolve\(__dirname,\s*"\.\.",\s*"assets",\s*"media-scout\.ico"\)/,
-  );
-  assert.doesNotMatch(
-    mainSource,
-    /path\.join\(__dirname,\s*"assets",\s*"media-scout-logo\.png"\)/,
+    /new Tray\(icon\.resize\(\{\s*height:\s*32,\s*width:\s*32\s*\}\)\)/,
   );
 });

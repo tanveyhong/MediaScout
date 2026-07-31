@@ -34,6 +34,13 @@ const { DEFAULT_BRIDGE_PORT, startCaptureBridge } = require("./capture-bridge");
 
 const MEDIA_PARTITION = "persist:media-scout";
 const DEFAULT_START_URL = "https://archive.org/";
+const APP_ID = "com.independent.mediascout";
+const APP_ICON_PATH = path.resolve(
+  __dirname,
+  "..",
+  "assets",
+  "media-scout-logo.png",
+);
 let pairingCode = "";
 let encryptedPairingCode = "";
 let mainWindow;
@@ -88,7 +95,15 @@ const ytDlpPath = unpackedBinaryPath(
   ),
 );
 
-app.setAppUserModelId("com.independent.mediascout");
+app.setAppUserModelId(APP_ID);
+
+function loadAppIcon() {
+  const icon = nativeImage.createFromPath(APP_ICON_PATH);
+  if (!icon.isEmpty()) return icon;
+  return nativeImage.createFromPath(
+    path.resolve(__dirname, "..", "assets", "media-scout.ico"),
+  );
+}
 
 function settingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -1173,6 +1188,7 @@ function launchCaptureBridge() {
 }
 
 function createWindow() {
+  const appIcon = loadAppIcon();
   mainWindow = new BrowserWindow({
     width: 1120,
     height: 690,
@@ -1183,7 +1199,7 @@ function createWindow() {
     maximizable: true,
     fullscreenable: true,
     title: "Media Scout",
-    icon: path.resolve(__dirname, "..", "assets", "media-scout.ico"),
+    icon: appIcon,
     backgroundColor: "#171316",
     frame: false,
     webPreferences: {
@@ -1194,6 +1210,7 @@ function createWindow() {
       partition: MEDIA_PARTITION,
     },
   });
+  if (!appIcon.isEmpty()) mainWindow.setIcon(appIcon);
   mainWindow.setAlwaysOnTop(alwaysOnTop);
   mainWindow.on("close", (event) => {
     if (!appClosing && preferences.closeBehavior === "tray") {
@@ -1287,10 +1304,9 @@ function showMainWindow() {
 }
 
 function createTray() {
-  const iconPath = path.resolve(__dirname, "..", "assets", "media-scout.ico");
-  const icon = nativeImage.createFromPath(iconPath);
+  const icon = loadAppIcon();
   if (icon.isEmpty()) return;
-  tray = new Tray(icon);
+  tray = new Tray(icon.resize({ height: 32, width: 32 }));
   tray.setToolTip("Media Scout");
   tray.setContextMenu(
     Menu.buildFromTemplate([
