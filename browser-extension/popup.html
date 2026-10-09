@@ -75,6 +75,48 @@
         background: #ef7f8a;
         font-weight: 700;
       }
+      .secondary {
+        width: 100%;
+        margin-top: 8px;
+        color: #ef7f8a;
+        border: 1px solid #604b54;
+        background: transparent;
+      }
+      #mediaResults {
+        display: grid;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .results-title {
+        margin: 16px 0 6px;
+        color: #ef7f8a;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .media-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 7px;
+        overflow: hidden;
+        border: 1px solid #49383f;
+        border-radius: 6px;
+        background: #30262c;
+      }
+      .media-item span {
+        flex: 1;
+        overflow: hidden;
+        color: #bea9ad;
+        font-size: 10px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .media-item button {
+        padding: 5px 7px;
+        font-size: 11px;
+      }
     </style>
   </head>
   <body>
@@ -93,7 +135,18 @@
       />
       <button type="submit">Pair</button>
     </form>
-    <p>Keep Media Scout open, then play a supported public video.</p>
+    <button id="captureButton" class="secondary" type="button">
+      Detect current media
+    </button>
+    <button id="resetButton" class="secondary" type="button">
+      Reset saved pairing
+    </button>
+    <div class="results-title">Detected media</div>
+    <div id="mediaResults" hidden></div>
+    <p>
+      Pair once, then play media. Use Detect current media to send it to Media
+      Scout for download.
+    </p>
     <script src="popup.js"></script>
   </body>
 </html>

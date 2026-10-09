@@ -22,19 +22,28 @@ window.addEventListener("message", (event) => {
 
 function recentNetworkMediaUrls() {
   const flixFrame = /(?:^|\.)flixcloud\.cc$/i.test(location.hostname);
-  const mediaHosts = /(?:douyinvod|bytecdn|bytefcdn|amemv|snssdk|pstatp)\./i;
+  const mediaHosts =
+    /(?:douyinvod|bytecdn|bytefcdn|amemv|snssdk|pstatp|sb-cd|fbcdn|cdninstagram|scontent|instagram)\./i;
   return [...performance.getEntriesByType("resource")]
     .reverse()
     .filter(
       (entry) =>
         entry.initiatorType === "video" ||
+        mediaHosts.test(entry.name) ||
         /(?:\.m3u8(?:[?#]|$)|\.mpd(?:[?#]|$)|\.mp4(?:[?#]|$)|mime_type=video|video_id=|douyinvod)/i.test(
           entry.name,
         ),
     )
     .map((entry) => entry.name)
     .filter(
-      (url) => /^https?:/i.test(url) && (flixFrame || mediaHosts.test(url)),
+      (url) =>
+        /^https?:/i.test(url) &&
+        !/\.(?:jpe?g|png|webp|gif|heic|avif|svg|js|css)(?:[?#]|$)/i.test(
+          new URL(url).pathname,
+        ) &&
+        (flixFrame ||
+          mediaHosts.test(url) ||
+          /\.(?:mp4|webm|mov|m4v|m3u8)(?:[?#]|$)/i.test(url)),
     )
     .filter((url, index, all) => index === all.indexOf(url))
     .sort((left, right) => {

@@ -111,6 +111,47 @@ function looksLikeDouyinAsset(url, requestType = "", contextUrl = "") {
   }
 }
 
+function looksLikeMediaRequest(url, requestType = "") {
+  if (requestType === "media") return true;
+  if (
+    /\.(?:jpe?g|png|webp|gif|heic|avif|svg|js|css)(?:[?#]|$)/i.test(
+      new URL(url).pathname,
+    )
+  ) {
+    return false;
+  }
+  return /(?:\.m3u8|\.mpd|\.mp4|\.webm|\.mov|\.m4v)(?:[?#]|$)|(?:fbcdn|scontent|cdninstagram|sb-cd|douyinvod|bytecdn|bytefcdn|mime_type=video|video_id=)/i.test(
+    decodedUrl(url),
+  );
+}
+
+function rememberMediaRequest(tabId, url) {
+  if (tabId < 0 || !/^https?:/i.test(url)) return;
+  const entries = recentMediaByTab.get(tabId) || [];
+  entries.unshift({ capturedAt: Date.now(), url });
+  recentMediaByTab.set(
+    tabId,
+    entries
+      .filter(
+        (entry, index, all) =>
+          index === all.findIndex((candidate) => candidate.url === entry.url),
+      )
+      .slice(0, 32),
+  );
+}
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    if (looksLikeMediaRequest(details.url, details.type)) {
+      rememberMediaRequest(details.tabId, details.url);
+    }
+  },
+  {
+    urls: ["<all_urls>"],
+    types: ["media", "xmlhttprequest", "other"],
+  },
+);
+
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (
@@ -122,17 +163,7 @@ chrome.webRequest.onBeforeRequest.addListener(
       )
     )
       return;
-    const entries = recentMediaByTab.get(details.tabId) || [];
-    entries.unshift({ capturedAt: Date.now(), url: details.url });
-    recentMediaByTab.set(
-      details.tabId,
-      entries
-        .filter(
-          (entry, index, all) =>
-            index === all.findIndex((candidate) => candidate.url === entry.url),
-        )
-        .slice(0, 24),
-    );
+    rememberMediaRequest(details.tabId, details.url);
   },
   {
     urls: [
@@ -166,6 +197,7 @@ function supportedPage(url) {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
     return (
+      ["http:", "https:"].includes(parsed.protocol) ||
       (["instagram.com", "www.instagram.com"].includes(host) &&
         /^\/(?:p|reel|reels|tv)\/[A-Za-z0-9_-]+\/?$/.test(parsed.pathname)) ||
       (["bilibili.com", "www.bilibili.com"].includes(host) &&
@@ -237,7 +269,34 @@ async function resolvePage(pageUrl, media = {}) {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "capture-active") {
+    (async () => {
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      });
+      if (!tab?.id) {
+        sendResponse({ ok: false, candidates: [] });
+        return;
+      }
+      const payload = await chrome.tabs
+        .sendMessage(tab.id, { type: "capture-now" })
+        .catch(() => ({}));
+      const networkMedia = preferredMediaUrl(tab.id, payload?.mediaUrl);
+      const allCandidates = combinedMediaCandidates(tab.id, payload);
+      const candidates = [...new Set([networkMedia, ...allCandidates])].filter(
+        (url) => /^https?:/i.test(url),
+      );
+      sendResponse({ ok: candidates.length > 0, candidates });
+      resolvePage(tab.url || payload?.pageUrl || "", {
+        ...payload,
+        mediaCandidates: allCandidates,
+        mediaUrl: networkMedia,
+      }).catch(() => {});
+    })();
+    return true;
+  }
   if (message?.type !== "media-played") return;
   const networkMedia = preferredMediaUrl(sender.tab?.id, message.mediaUrl);
   const allCandidates = combinedMediaCandidates(sender.tab?.id, message);

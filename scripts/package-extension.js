@@ -23,7 +23,11 @@ async function main() {
     output.once("error", reject);
     archive.once("error", reject);
     archive.pipe(output);
-    archive.directory(source, false);
+    archive.directory(source, false, { ignore: ["manifest.json"] });
+    archive.append(
+      JSON.stringify({ ...manifest, name: "Media Scout Companion" }, null, 2),
+      { name: "manifest.json" },
+    );
     archive.finalize();
   });
   console.log(outputPath);

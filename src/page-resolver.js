@@ -83,7 +83,15 @@ function decodeJsonUrl(value) {
   }
 }
 
+function withHttpsScheme(rawUrl) {
+  const value = String(rawUrl || "").trim();
+  return /^[a-z][a-z0-9+.-]*:/i.test(value) || !value
+    ? value
+    : `https://${value}`;
+}
+
 function normalizePublicPage(rawUrl, options = {}) {
+  rawUrl = withHttpsScheme(rawUrl);
   const parsed = parseHttpUrl(rawUrl);
   if (!parsed) return null;
   const host = parsed.hostname.toLowerCase();
@@ -174,6 +182,7 @@ function extractPageMetadata(html) {
 }
 
 async function resolvePublicPage(rawUrl, options = {}) {
+  rawUrl = withHttpsScheme(rawUrl);
   const genericProvider = genericProviderFor(rawUrl, options.authorizedDomains);
   const pageUrl = normalizePublicPage(rawUrl, options);
   if (!pageUrl) {
@@ -246,7 +255,9 @@ async function resolvePublicPage(rawUrl, options = {}) {
           cookies: options.cookieFile,
           format: pageHost.endsWith("douyin.com")
             ? "best[vcodec^=h264]/best[vcodec^=avc]/best"
-            : undefined,
+            : pageHost.endsWith("instagram.com")
+              ? "best[vcodec!=none][acodec!=none]/best"
+              : undefined,
           noPlaylist: true,
           noWarnings: true,
           skipDownload: true,

@@ -15,11 +15,12 @@ const packageJson = JSON.parse(
   fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
 );
 
-test("extension access is limited to supported sites and the local bridge", () => {
-  assert.equal(manifest.host_permissions.includes("<all_urls>"), false);
-  assert.equal(
-    manifest.content_scripts[0].matches.includes("<all_urls>"),
-    false,
+test("extension can observe media on arbitrary web pages and use the local bridge", () => {
+  assert.ok(manifest.host_permissions.includes("<all_urls>"));
+  assert.ok(
+    manifest.content_scripts.some((script) =>
+      script.matches.includes("<all_urls>"),
+    ),
   );
   assert.ok(manifest.host_permissions.includes("http://127.0.0.1:48731/*"));
   assert.ok(manifest.host_permissions.includes("https://*.flixcloud.cc/*"));
@@ -65,4 +66,36 @@ test("the desktop window and tray use the runtime Media Scout icon", () => {
     mainSource,
     /new Tray\(icon\.resize\(\{\s*height:\s*32,\s*width:\s*32\s*\}\)\)/,
   );
+});
+
+test("service worker only filters on valid webRequest resource types", () => {
+  // Chrome rejects unknown types at registration, which stops the worker
+  // before its message listeners exist.
+  const valid = new Set([
+    "csp_report",
+    "font",
+    "image",
+    "main_frame",
+    "media",
+    "object",
+    "other",
+    "ping",
+    "script",
+    "stylesheet",
+    "sub_frame",
+    "webbundle",
+    "websocket",
+    "xmlhttprequest",
+  ]);
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "browser-extension", "service-worker.js"),
+    "utf8",
+  );
+  const typeLists = [...source.matchAll(/types:\s*\[([^\]]*)\]/g)];
+  assert.ok(typeLists.length > 0);
+  for (const [, list] of typeLists) {
+    for (const [, type] of list.matchAll(/"([^"]+)"/g)) {
+      assert.ok(valid.has(type), `invalid webRequest type: ${type}`);
+    }
+  }
 });

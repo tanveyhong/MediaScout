@@ -248,3 +248,43 @@ test("accepts the HLS request behind a FlixCloud blob player", async () => {
     server.shutdown();
   }
 });
+
+test("accepts captured Instagram CDN media", async () => {
+  const captures = [];
+  const mediaUrl =
+    "https://vdownload-21.sb-cd.com/1/7/1762161-320p.mp4?secure=test";
+  const server = startCaptureBridge(
+    (capture) => captures.push(capture),
+    0,
+    () => ({}),
+    {
+      probeMedia: async (url) => ({
+        audioCodec: "aac",
+        url,
+        videoCodec: "h264",
+      }),
+      resolvePublicPage: async () => ({ ok: false }),
+    },
+  );
+  await new Promise((resolve) => server.once("listening", resolve));
+  const { port } = server.address();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/resolve`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "chrome-extension://trustedcompanion",
+      },
+      body: JSON.stringify({
+        mediaUrl,
+        pageUrl: "https://www.instagram.com/reel/Test123/",
+        mediaCandidates: [mediaUrl],
+      }),
+    });
+    assert.equal(response.status, 202);
+    assert.equal(captures[0].url, mediaUrl);
+    assert.equal(captures[0].extension, ".mp4");
+  } finally {
+    server.shutdown();
+  }
+});

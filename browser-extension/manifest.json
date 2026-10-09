@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "Media Scout Companion",
-  "version": "0.7.1",
+  "name": "Media Scout Companion (Local)",
+  "version": "0.7.4",
   "description": "Resolve supported public Instagram, YouTube, Bilibili, Douyin, and Re:ANIME videos through Media Scout.",
-  "permissions": ["storage", "tabs", "webRequest"],
+  "permissions": ["storage", "tabs", "webRequest", "downloads"],
   "host_permissions": [
+    "<all_urls>",
     "https://*.instagram.com/*",
     "https://*.youtube.com/*",
     "https://youtu.be/*",
@@ -36,24 +37,14 @@
       "world": "MAIN"
     },
     {
-      "matches": [
-        "https://*.instagram.com/*",
-        "https://*.youtube.com/*",
-        "https://youtu.be/*",
-        "https://*.bilibili.com/*",
-        "https://*.douyin.com/*",
-        "https://reanime.to/*",
-        "https://*.reanime.to/*",
-        "https://flixcloud.cc/*",
-        "https://*.flixcloud.cc/*"
-      ],
+      "matches": ["<all_urls>"],
       "js": ["content-script.js"],
       "run_at": "document_start",
       "all_frames": true
     }
   ],
   "action": {
-    "default_title": "Media Scout Companion",
+    "default_title": "Media Scout Companion (Local)",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

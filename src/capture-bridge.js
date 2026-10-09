@@ -21,6 +21,8 @@ function isAllowedOrigin(origin) {
   return ALLOWED_EXTENSION_ORIGINS.test(String(origin || ""));
 }
 
+const IMAGE_CODECS = /^(?:mjpeg|png|webp|gif|bmp|tiff)$/i;
+
 function probeMedia(url, pageUrl) {
   return new Promise((resolve) => {
     let stderr = "";
@@ -482,21 +484,9 @@ function startCaptureBridge(
         });
         const page = parseHttpUrl(payload.pageUrl);
         const mediaHint = parseHttpUrl(payload.mediaUrl);
-        const isDouyinPage =
-          page &&
-          (page.hostname === "v.douyin.com" ||
-            page.hostname === "douyin.com" ||
-            page.hostname === "www.douyin.com");
-        const usableDouyinHint =
-          isDouyinPage &&
-          mediaHint &&
-          !["blob:", "data:"].includes(mediaHint.protocol);
+        const usableCapturedHint = Boolean(page && mediaHint);
         const isReanimePage =
           page && /(?:^|\.)reanime\.to$/i.test(page.hostname);
-        const usableCapturedHint =
-          usableDouyinHint &&
-          mediaHint &&
-          !["blob:", "data:"].includes(mediaHint.protocol);
         let selectedCapturedMedia = null;
         if (usableCapturedHint) {
           const candidates = [
@@ -510,9 +500,11 @@ function startCaptureBridge(
             .map((url) => url.href)
             .filter((url, index, all) => index === all.indexOf(url))
             .slice(0, 16);
-          const probes = await Promise.all(
-            candidates.map((url) => probeMediaImpl(url, page.href)),
-          );
+          const probes = (
+            await Promise.all(
+              candidates.map((url) => probeMediaImpl(url, page.href)),
+            )
+          ).filter((probe) => !IMAGE_CODECS.test(probe.videoCodec || ""));
           selectedCapturedMedia =
             probes.find(
               (probe) =>
@@ -542,13 +534,17 @@ function startCaptureBridge(
             selectedCapturedMedia.audioCodec = separateAudio.audioCodec;
           }
         }
+        // Captured links that probe as nothing playable fall back to the page
+        // resolver, except on Re:ANIME where only the captured HLS is usable.
+        const useCapturedMedia =
+          usableCapturedHint && (selectedCapturedMedia || isReanimePage);
         let resolverOptions;
         let resolved;
         try {
-          resolverOptions = usableCapturedHint
+          resolverOptions = useCapturedMedia
             ? {}
             : await getResolverOptions(payload.pageUrl);
-          resolved = usableCapturedHint
+          resolved = useCapturedMedia
             ? {
                 analysis: selectedCapturedMedia,
                 candidateTypes:
@@ -568,9 +564,7 @@ function startCaptureBridge(
                 title: String(payload.title || ""),
                 reason: selectedCapturedMedia
                   ? ""
-                  : isReanimePage
-                    ? "FlixCloud exposed no readable HLS media."
-                    : "Douyin exposed audio-only or unreadable media.",
+                  : "FlixCloud exposed no readable HLS media.",
               }
             : await resolvePublicPageImpl(payload.pageUrl, resolverOptions);
           if (
