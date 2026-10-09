@@ -123,7 +123,19 @@ function startCaptureBridge(
     bridgeOptions.resolvePublicPage || resolvePublicPage;
   const pairingCode = String(bridgeOptions.pairingCode || "");
   let pairedOrigin = "";
+  let pairedByCode = false;
   const extensionAuthorized = (origin, request) => {
+    const codeMatches =
+      Boolean(pairingCode) &&
+      request?.headers["x-media-scout-pairing"] === pairingCode;
+    // Chrome omits Origin on an extension's GET requests to a host it has
+    // permission for, so the saved code alone reconnects it after a restart.
+    // Web pages cannot send the custom header without a preflight carrying
+    // their Origin, which OPTIONS rejects.
+    if (!origin && codeMatches) {
+      pairedByCode = true;
+      return true;
+    }
     if (!isAllowedOrigin(origin)) return false;
     if (!pairedOrigin && !pairingCode) pairedOrigin = origin;
     if (
@@ -398,13 +410,12 @@ function startCaptureBridge(
     }
 
     if (request.method === "GET" && request.url === "/status") {
-      extensionAuthorized(origin, request);
       json(
         response,
         200,
         {
           ok: true,
-          paired: Boolean(pairedOrigin && pairedOrigin === origin),
+          paired: extensionAuthorized(origin, request),
           pairingRequired: Boolean(pairingCode),
           service: "Media Scout capture bridge",
         },
@@ -728,7 +739,7 @@ function startCaptureBridge(
     for (const socket of sockets) socket.destroy();
     sockets.clear();
   };
-  server.isPaired = () => Boolean(pairedOrigin);
+  server.isPaired = () => Boolean(pairedOrigin) || pairedByCode;
 
   server.enqueueCommand = (command) => {
     commands.push(command);

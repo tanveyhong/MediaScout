@@ -288,3 +288,60 @@ test("accepts captured Instagram CDN media", async () => {
     server.shutdown();
   }
 });
+
+test("reconnects from the saved code when Chrome omits the Origin header", async () => {
+  const server = startCaptureBridge(
+    () => {},
+    0,
+    () => ({}),
+    { pairingCode: "123456" },
+  );
+  await new Promise((resolve) => server.once("listening", resolve));
+  const { port } = server.address();
+  try {
+    const noCode = await fetch(`http://127.0.0.1:${port}/commands`);
+    assert.equal(noCode.status, 403);
+    const wrongCode = await fetch(`http://127.0.0.1:${port}/commands`, {
+      headers: { "X-Media-Scout-Pairing": "654321" },
+    });
+    assert.equal(wrongCode.status, 403);
+    assert.equal(server.isPaired(), false);
+
+    const commands = await fetch(`http://127.0.0.1:${port}/commands`, {
+      headers: { "X-Media-Scout-Pairing": "123456" },
+    });
+    assert.equal(commands.status, 200);
+    assert.equal(server.isPaired(), true);
+
+    const status = await fetch(`http://127.0.0.1:${port}/status`, {
+      headers: { "X-Media-Scout-Pairing": "123456" },
+    });
+    assert.equal((await status.json()).paired, true);
+  } finally {
+    server.shutdown();
+  }
+});
+
+test("rejects a web page preflight for the pairing header", async () => {
+  const server = startCaptureBridge(
+    () => {},
+    0,
+    () => ({}),
+    { pairingCode: "123456" },
+  );
+  await new Promise((resolve) => server.once("listening", resolve));
+  const { port } = server.address();
+  try {
+    const preflight = await fetch(`http://127.0.0.1:${port}/commands`, {
+      method: "OPTIONS",
+      headers: {
+        "Access-Control-Request-Headers": "x-media-scout-pairing",
+        "Access-Control-Request-Method": "GET",
+        Origin: "https://attacker.example",
+      },
+    });
+    assert.equal(preflight.status, 403);
+  } finally {
+    server.shutdown();
+  }
+});

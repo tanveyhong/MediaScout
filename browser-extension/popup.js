@@ -55,6 +55,11 @@ async function detectMedia() {
   return response;
 }
 
+// The code is only needed once; hide the form while the saved code works.
+function showPaired(paired) {
+  pairForm.hidden = paired;
+}
+
 function showStatus(online, message) {
   status.classList.toggle("online", online);
   statusText.textContent = message;
@@ -84,6 +89,7 @@ chrome.storage.local
     return connect(savedCode);
   })
   .then(({ ok, payload }) => {
+    showPaired(ok && payload.paired);
     showStatus(
       ok && payload.paired,
       payload.paired ? "Media Scout connected" : "Pairing required",
@@ -112,6 +118,7 @@ pairForm.addEventListener("submit", async (event) => {
       return;
     }
     await chrome.storage.local.set({ pairingCode: code });
+    showPaired(true);
     showStatus(true, "Media Scout connected");
   } catch {
     showStatus(false, "Open Media Scout to connect");
@@ -128,5 +135,6 @@ captureButton.addEventListener("click", async () => {
 resetButton.addEventListener("click", async () => {
   await chrome.storage.local.remove("pairingCode");
   pairingCode.value = "";
+  showPaired(false);
   showStatus(false, "Pairing reset");
 });

@@ -3,7 +3,7 @@
   "name": "Media Scout Companion (Local)",
   "version": "0.7.4",
   "description": "Resolve supported public Instagram, YouTube, Bilibili, Douyin, and Re:ANIME videos through Media Scout.",
-  "permissions": ["storage", "tabs", "webRequest", "downloads"],
+  "permissions": ["alarms", "storage", "tabs", "webRequest", "downloads"],
   "host_permissions": [
     "<all_urls>",
     "https://*.instagram.com/*",

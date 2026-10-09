@@ -397,10 +397,12 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
 });
 
 let polling = false;
+let pollTimer = 0;
 
 async function pollCommands() {
   if (polling) return;
   polling = true;
+  clearTimeout(pollTimer);
   try {
     const response = await fetch(COMMANDS_URL, {
       cache: "no-store",
@@ -455,8 +457,15 @@ async function pollCommands() {
     await chrome.storage.local.set({ bridgeOnline: false });
   } finally {
     polling = false;
-    setTimeout(pollCommands, 1500);
+    pollTimer = setTimeout(pollCommands, 1500);
   }
 }
+
+// Chrome suspends an idle worker, which stops the poll loop. The alarm wakes it
+// so a freshly opened Media Scout reconnects without any browsing activity.
+chrome.alarms.create("bridge-poll", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "bridge-poll") pollCommands();
+});
 
 pollCommands();
