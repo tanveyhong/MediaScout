@@ -54,8 +54,14 @@ test("the desktop window and tray use the runtime Media Scout icon", () => {
     path.join(__dirname, "..", "src", "main.js"),
     "utf8",
   );
-  assert.match(mainSource, /app\.setName\(APP_NAME\)/);
-  assert.match(mainSource, /app\.setAppUserModelId\(APP_ID\)/);
+  assert.match(
+    mainSource,
+    /app\.setName\(app\.isPackaged \? APP_NAME : `\$\{APP_NAME\} Local`\)/,
+  );
+  assert.match(
+    mainSource,
+    /app\.setAppUserModelId\(app\.isPackaged \? APP_ID : `\$\{APP_ID\}\.local`\)/,
+  );
   assert.match(
     mainSource,
     /process\.platform === "win32" \? "media-scout\.ico" : "media-scout-logo\.png"/,

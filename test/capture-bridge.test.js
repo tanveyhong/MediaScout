@@ -282,7 +282,9 @@ test("accepts captured Instagram CDN media", async () => {
       }),
     });
     assert.equal(response.status, 202);
-    assert.equal(captures[0].url, mediaUrl);
+    const deliveredUrl = new URL(captures[0].url);
+    assert.equal(deliveredUrl.hostname, "127.0.0.1");
+    assert.match(deliveredUrl.pathname, /^\/media\/[a-f0-9-]+\/video\.mp4$/i);
     assert.equal(captures[0].extension, ".mp4");
   } finally {
     server.shutdown();

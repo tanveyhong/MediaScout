@@ -10,7 +10,7 @@ const server = createFixtureServer();
 
 server.listen(0, "127.0.0.1", () => {
   const address = server.address();
-  const startUrl = `http://127.0.0.1:${address.port}/`;
+  const startUrl = `http://127.0.0.1:${address.port}/test-tone.wav`;
   process.stdout.write(`Media Scout local test: ${startUrl}\n`);
 
   const child = spawn(electronExecutable, [projectRoot], {
