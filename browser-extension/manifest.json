@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Media Scout Companion (Local)",
-  "version": "0.7.4",
+  "version": "0.7.6",
   "description": "Resolve supported public Instagram, YouTube, Bilibili, Douyin, and Re:ANIME videos through Media Scout.",
   "permissions": ["alarms", "storage", "tabs", "webRequest", "downloads"],
   "host_permissions": [

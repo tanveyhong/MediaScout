@@ -7,3 +7,6 @@ onlyBuiltDependencies:
   - electron
   - electron-winstaller
   - ffmpeg-static
+overrides:
+  undici@6.28.0: 6.29.0
+  undici@7.29.0: 7.30.0
