@@ -1,7 +1,7 @@
 {
   "name": "media-scout",
   "productName": "Media Scout",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "Detect and save authorized direct media files from an in-app browser.",
   "main": "src/main.js",
   "author": "Independent Developer",
@@ -32,6 +32,7 @@
   "build": {
     "appId": "com.independent.mediascout",
     "productName": "Media Scout",
+    "artifactName": "Media-Scout-Setup-${version}.${ext}",
     "asar": true,
     "asarUnpack": [
       "browser-extension/**/*",
