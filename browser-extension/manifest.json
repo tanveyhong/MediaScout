@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Media Scout Companion (Local)",
-  "version": "0.7.7",
+  "name": "Media Scout Companion",
+  "version": "0.7.8",
   "description": "Resolve supported public Instagram, YouTube, Bilibili, Douyin, and Re:ANIME videos through Media Scout.",
   "permissions": ["alarms", "storage", "tabs", "webRequest", "downloads"],
   "host_permissions": [
@@ -23,7 +23,8 @@
     "https://*.reanime.to/*",
     "https://flixcloud.cc/*",
     "https://*.flixcloud.cc/*",
-    "http://127.0.0.1:48731/*"
+    "http://127.0.0.1:48731/*",
+    "http://127.0.0.1:48732/*"
   ],
   "background": {
     "service_worker": "service-worker.js"
@@ -44,7 +45,7 @@
     }
   ],
   "action": {
-    "default_title": "Media Scout Companion (Local)",
+    "default_title": "Media Scout Companion",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

@@ -1,7 +1,7 @@
 {
   "name": "media-scout",
   "productName": "Media Scout",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "description": "Detect and save authorized direct media files from an in-app browser.",
   "main": "src/main.js",
   "author": "Independent Developer",
@@ -65,6 +65,7 @@
       ]
     },
     "nsis": {
+      "include": "build/installer.nsh",
       "installerIcon": "assets/media-scout.ico",
       "uninstallerIcon": "assets/media-scout.ico",
       "installerHeaderIcon": "assets/media-scout.ico",

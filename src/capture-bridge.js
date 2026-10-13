@@ -418,6 +418,8 @@ function startCaptureBridge(
           paired: extensionAuthorized(origin, request),
           pairingRequired: Boolean(pairingCode),
           service: "Media Scout capture bridge",
+          appChannel: bridgeOptions.appChannel || "installed",
+          appVersion: bridgeOptions.appVersion || "",
         },
         origin,
       );
@@ -660,6 +662,7 @@ function startCaptureBridge(
             resolvedPageHost.endsWith("bilibili.com") ||
             resolvedPageHost.endsWith("douyin.com") ||
             resolvedPageHost.endsWith("youtube.com") ||
+            resolvedPageHost.endsWith("instagram.com") ||
             Boolean(resolved.analysis?.audioSourceUrl)
           ) {
             const sourceVariants = resolved.variants?.length

@@ -36,6 +36,10 @@ const MEDIA_PARTITION = "persist:media-scout";
 const DEFAULT_START_URL = "https://archive.org/";
 const APP_ID = "com.independent.mediascout";
 const APP_NAME = "Media Scout";
+const APP_CHANNEL = app.isPackaged ? "installed" : "local";
+const BRIDGE_PORT = app.isPackaged
+  ? DEFAULT_BRIDGE_PORT
+  : DEFAULT_BRIDGE_PORT + 1;
 const APP_ICON_PATH = path.resolve(
   __dirname,
   "..",
@@ -96,8 +100,14 @@ const ytDlpPath = unpackedBinaryPath(
   ),
 );
 
-app.setName(APP_NAME);
-app.setAppUserModelId(APP_ID);
+if (!app.isPackaged) {
+  app.setPath(
+    "userData",
+    path.join(app.getPath("appData"), `${APP_NAME} Local`),
+  );
+}
+app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} Local`);
+app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.local`);
 
 function loadAppIcon() {
   const icon = nativeImage.createFromPath(APP_ICON_PATH);
@@ -1172,7 +1182,7 @@ function launchCaptureBridge() {
   clearTimeout(captureBridgeRetryTimer);
   captureBridge = startCaptureBridge(
     (media) => addDetectedMedia(media),
-    DEFAULT_BRIDGE_PORT,
+    BRIDGE_PORT,
     async (pageUrl) => {
       if (!isDouyinVideoUrl(pageUrl)) {
         return { authorizedDomains: preferences.authorizedDomains };
@@ -1187,6 +1197,8 @@ function launchCaptureBridge() {
     {
       log: (...args) => appData?.log(...args),
       pairingCode,
+      appChannel: APP_CHANNEL,
+      appVersion: app.getVersion(),
     },
   );
   captureBridge.once("error", () => {
@@ -1208,7 +1220,7 @@ function createWindow() {
     resizable: true,
     maximizable: true,
     fullscreenable: true,
-    title: "Media Scout",
+    title: app.isPackaged ? APP_NAME : `${APP_NAME} — LOCAL DEV`,
     icon: appIcon,
     backgroundColor: "#171316",
     frame: false,
@@ -1317,7 +1329,7 @@ function createTray() {
   const icon = loadAppIcon();
   if (icon.isEmpty()) return;
   tray = new Tray(icon.resize({ height: 32, width: 32 }));
-  tray.setToolTip("Media Scout");
+  tray.setToolTip(app.isPackaged ? APP_NAME : `${APP_NAME} — LOCAL DEV`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { click: showMainWindow, label: "Open Media Scout" },
@@ -1410,7 +1422,9 @@ ipcMain.handle("navigation:validate", (_event, rawUrl) => {
 });
 
 ipcMain.handle("app:get-config", () => ({
+  appChannel: APP_CHANNEL,
   appVersion: app.getVersion(),
+  bridgePort: BRIDGE_PORT,
   extensionPath: extensionDirectory(),
   startUrl: process.env.MEDIA_SCOUT_START_URL || DEFAULT_START_URL,
   downloadDirectory,
@@ -1528,6 +1542,8 @@ ipcMain.handle("extension:status", () => {
     extensionAvailable = false;
   }
   return {
+    appChannel: APP_CHANNEL,
+    appVersion: app.getVersion(),
     bridgeOnline: Boolean(captureBridge?.listening),
     connected: Boolean(captureBridge?.isPaired()),
     extensionAvailable,

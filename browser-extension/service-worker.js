@@ -1,17 +1,32 @@
 "use strict";
 
-const RESOLVE_URL = "http://127.0.0.1:48731/resolve";
-const COMMANDS_URL = "http://127.0.0.1:48731/commands";
 const sentKeys = new Map();
 const recentMediaByTab = new Map();
 const pendingShareTabs = new Map();
+const instagramCaptureTimers = new Map();
 
 async function bridgeHeaders(contentType = false) {
-  const { pairingCode = "" } = await chrome.storage.local.get("pairingCode");
+  const {
+    bridgePort = 48731,
+    pairingCode = "",
+    pairingCodes = {},
+  } = await chrome.storage.local.get([
+    "bridgePort",
+    "pairingCode",
+    "pairingCodes",
+  ]);
+  const code =
+    pairingCodes[String(bridgePort)] ||
+    (bridgePort === 48731 ? pairingCode : "");
   return {
     ...(contentType ? { "Content-Type": "application/json" } : {}),
-    ...(pairingCode ? { "X-Media-Scout-Pairing": pairingCode } : {}),
+    ...(code ? { "X-Media-Scout-Pairing": code } : {}),
   };
+}
+
+async function bridgeUrl(pathname) {
+  const { bridgePort = 48731 } = await chrome.storage.local.get("bridgePort");
+  return `http://127.0.0.1:${bridgePort}${pathname}`;
 }
 
 function decodedUrl(url) {
@@ -140,10 +155,37 @@ function rememberMediaRequest(tabId, url) {
   );
 }
 
+function scheduleInstagramCapture(tabId) {
+  if (tabId < 0) return;
+  clearTimeout(instagramCaptureTimers.get(tabId));
+  instagramCaptureTimers.set(
+    tabId,
+    setTimeout(() => {
+      instagramCaptureTimers.delete(tabId);
+      captureSupportedTab(tabId).catch(() => {});
+    }, 1_200),
+  );
+}
+
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
     if (looksLikeMediaRequest(details.url, details.type)) {
       rememberMediaRequest(details.tabId, details.url);
+      const likelyVideo =
+        details.type === "media" ||
+        /(?:mime_type=video|video_id=|\/t\d+\/f\d+\/m\d+\/)/i.test(
+          decodedUrl(details.url),
+        );
+      if (likelyVideo && details.tabId >= 0) {
+        chrome.tabs
+          .get(details.tabId)
+          .then((tab) => {
+            if (/^https?:\/\/(?:www\.)?instagram\.com\//i.test(tab.url || "")) {
+              scheduleInstagramCapture(details.tabId);
+            }
+          })
+          .catch(() => {});
+      }
     }
   },
   {
@@ -240,7 +282,7 @@ async function resolvePage(pageUrl, media = {}) {
   sentKeys.set(key, Date.now());
 
   try {
-    const response = await fetch(RESOLVE_URL, {
+    const response = await fetch(await bridgeUrl("/resolve"), {
       method: "POST",
       headers: await bridgeHeaders(true),
       body: JSON.stringify({
@@ -404,7 +446,7 @@ async function pollCommands() {
   polling = true;
   clearTimeout(pollTimer);
   try {
-    const response = await fetch(COMMANDS_URL, {
+    const response = await fetch(await bridgeUrl("/commands"), {
       cache: "no-store",
       headers: await bridgeHeaders(),
     });

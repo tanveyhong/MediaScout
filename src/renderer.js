@@ -250,7 +250,7 @@ function element(tag, text = "", className = "") {
 async function refreshConnectionStatus() {
   const status = await window.mediaScout.getExtensionStatus();
   const message = status.connected
-    ? `Companion connected${status.manifestVersion ? ` · v${status.manifestVersion}` : ""}`
+    ? `Companion connected · ${status.appChannel === "local" ? "Local dev" : "Installed"}${status.manifestVersion ? ` · v${status.manifestVersion}` : ""}`
     : status.bridgeOnline
       ? "Pairing required"
       : "Companion bridge offline";
@@ -638,6 +638,7 @@ function createMediaCard(media) {
     );
     thumbnail.addEventListener("error", () => {
       thumbnail.removeAttribute("src");
+      thumbnail.hidden = true;
       addVideoThumbnail();
     });
     thumbnail.src = media.thumbnail;
@@ -646,7 +647,7 @@ function createMediaCard(media) {
   }
 
   function addVideoThumbnail() {
-    if (isAudio || !/douyin\.com$/i.test(media.pageHost || "")) return;
+    if (isAudio) return;
     if (previewTile.querySelector(".media-thumbnail-video")) return;
     const videoThumbnail = document.createElement("video");
     videoThumbnail.className = "media-thumbnail media-thumbnail-video";
@@ -657,6 +658,10 @@ function createMediaCard(media) {
     videoThumbnail.addEventListener("loadeddata", () => {
       previewTile.classList.add("has-thumbnail", "has-video-thumbnail");
       if (videoThumbnail.duration > 0.2) videoThumbnail.currentTime = 0.15;
+    });
+    videoThumbnail.addEventListener("error", () => {
+      videoThumbnail.remove();
+      previewTile.classList.remove("has-thumbnail", "has-video-thumbnail");
     });
     previewTile.prepend(videoThumbnail);
   }
@@ -704,7 +709,7 @@ async function loadInitialPage() {
   const config = await window.mediaScout.getConfig();
   installedAppVersion = config.appVersion;
   document.querySelector("#headerVersion").textContent =
-    `v${config.appVersion}`;
+    `v${config.appVersion} · ${config.appChannel === "local" ? "LOCAL DEV" : "INSTALLED"}`;
   document.querySelector("#appVersion").textContent =
     `Version ${config.appVersion}`;
   extensionPath.textContent = config.extensionPath;
