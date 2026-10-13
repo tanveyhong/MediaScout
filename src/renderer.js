@@ -15,6 +15,21 @@ const exportSelectedMediaButton = document.querySelector(
 );
 const resultTemplate = document.querySelector("#resultTemplate");
 const toast = document.querySelector("#toast");
+let installedAppVersion = "";
+
+function compareVersions(left, right) {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (
+    let index = 0;
+    index < Math.max(leftParts.length, rightParts.length);
+    index++
+  ) {
+    const difference = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (difference) return Math.sign(difference);
+  }
+  return 0;
+}
 const videoCountElement = document.querySelector("#videoCount");
 const audioCountElement = document.querySelector("#audioCount");
 const totalSizeElement = document.querySelector("#totalSize");
@@ -620,6 +635,7 @@ function createMediaCard(media) {
 
 async function loadInitialPage() {
   const config = await window.mediaScout.getConfig();
+  installedAppVersion = config.appVersion;
   document.querySelector("#headerVersion").textContent =
     `v${config.appVersion}`;
   document.querySelector("#appVersion").textContent =
@@ -712,10 +728,24 @@ installUpdateButton.addEventListener("click", () =>
   window.mediaScout.installUpdate(),
 );
 window.mediaScout.onUpdateStatus((status) => {
+  const latestVersion = status.version ? `v${status.version}` : "";
+  const statusMessages = {
+    checking: "Checking GitHub Releases for updates…",
+    available: `Update ${latestVersion} is available.`,
+    current:
+      status.version && installedAppVersion
+        ? compareVersions(status.version, installedAppVersion) < 0
+          ? `Latest published release is ${latestVersion}; installed version is v${installedAppVersion}.`
+          : `You're up to date (${latestVersion}).`
+        : "No newer release is available.",
+    downloading: `Downloading update: ${status.percent}%`,
+    ready: `Update ${latestVersion} is ready. Restart to install.`,
+    error:
+      status.message ||
+      "Update check failed. See the diagnostic log for details.",
+  };
   updateStatusElement.textContent =
-    status.state === "downloading"
-      ? `Downloading update: ${status.percent}%`
-      : `Update status: ${status.state}`;
+    statusMessages[status.state] || `Update status: ${status.state}`;
   downloadUpdateButton.hidden = status.state !== "available";
   installUpdateButton.hidden = status.state !== "ready";
 });
