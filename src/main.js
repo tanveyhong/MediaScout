@@ -990,9 +990,17 @@ function mediaKey(url) {
 }
 
 function addDetectedMedia(media) {
+  const page = media.pageUrl ? parseHttpUrl(media.pageUrl) : null;
+  const instagramPost =
+    page &&
+    /(^|\.)instagram\.com$/i.test(page.hostname) &&
+    (/\/(?:p|reel|reels|tv)\/[^/]+/i.test(page.pathname) ||
+      page.searchParams.has("modal_id"));
   const key =
-    media.source === "Public page resolver" && media.pageUrl
-      ? `page:${media.pageUrl}`
+    media.source === "Public page resolver" && page
+      ? instagramPost
+        ? `page:${page.hostname.toLowerCase()}${page.pathname}:${mediaKey(media.url)}`
+        : `page:${media.pageUrl}`
       : mediaKey(media.url);
   if (detectedKeys.has(key)) return false;
   detectedKeys.add(key);

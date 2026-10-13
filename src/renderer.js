@@ -30,6 +30,19 @@ function compareVersions(left, right) {
   }
   return 0;
 }
+
+function instagramPostKey(media) {
+  try {
+    const page = new URL(media.pageUrl);
+    if (!/(^|\.)instagram\.com$/i.test(page.hostname)) return "";
+    const postId = page.pathname.match(/\/(?:p|reel|reels|tv)\/([^/]+)/i)?.[1];
+    const modalId = page.searchParams.get("modal_id");
+    const identity = postId || modalId;
+    return identity ? `instagram:${identity.toLowerCase()}` : "";
+  } catch {
+    return "";
+  }
+}
 const videoCountElement = document.querySelector("#videoCount");
 const audioCountElement = document.querySelector("#audioCount");
 const totalSizeElement = document.querySelector("#totalSize");
@@ -125,6 +138,7 @@ const clipboardInbox = [];
 let currentPreferences = {};
 let downloadRightsConfirmed = false;
 const capturedMedia = new Map();
+const capturedInstagramPosts = new Map();
 const downloadViews = new Map();
 const progressSamples = new Map();
 
@@ -493,9 +507,10 @@ function createMediaCard(media) {
   const downloadStatusLabel = fragment.querySelector(".download-status-label");
   const downloadPercent = fragment.querySelector(".download-percent");
   const downloadFill = fragment.querySelector(".download-fill");
+  let cardMedia = media;
   let variants = media.variants?.length
     ? media.variants
-    : [{ label: "Best available", size: media.size || 0, url: media.url }];
+    : [qualityOption(media)];
   if (currentPreferences.maxHeight) {
     const limited = variants.filter(
       (variant) =>
@@ -504,12 +519,6 @@ function createMediaCard(media) {
     );
     if (limited.length) variants = limited;
   }
-  variants.forEach((variant, index) => {
-    const option = document.createElement("option");
-    option.value = String(index);
-    option.textContent = variant.label || `Option ${index + 1}`;
-    qualitySelect.append(option);
-  });
   const setDownloadState = ({
     detail = "",
     mode = "idle",
@@ -551,18 +560,76 @@ function createMediaCard(media) {
       downloadFill.style.width = "0%";
     }
   };
-  variants.forEach((variant) =>
-    registerDownloadView(variant.url, setDownloadState),
-  );
-  qualityControl.classList.toggle("single-quality", variants.length === 1);
   const selectedMedia = () => {
     const variant = variants[Number(qualitySelect.value) || 0];
-    return { ...media, ...variant, variants: media.variants };
+    return { ...cardMedia, ...variant, variants };
   };
   const updateVariantDetails = () => {
     const selected = selectedMedia();
     sizeElement.textContent = formatBytes(selected.size);
   };
+  const setVariants = (nextVariants, selectedUrl = "") => {
+    variants = nextVariants;
+    qualitySelect.replaceChildren();
+    variants.forEach((variant, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = variant.label || `Option ${index + 1}`;
+      qualitySelect.append(option);
+      registerDownloadView(variant.url, setDownloadState);
+    });
+    qualityControl.classList.toggle("single-quality", variants.length === 1);
+    const selectedIndex = variants.findIndex(
+      (variant) => variant.url === selectedUrl,
+    );
+    qualitySelect.value = String(selectedIndex < 0 ? 0 : selectedIndex);
+    updateVariantDetails();
+  };
+  function qualityOption(item) {
+    const height = item.height || item.analysis?.height || 0;
+    return {
+      label: item.label || (height ? `${height}p` : "Best available"),
+      height,
+      size: item.size || 0,
+      url: item.url,
+      analysis: item.analysis,
+    };
+  }
+  const toQualityOptions = (item) =>
+    item.variants?.length
+      ? item.variants.map(qualityOption)
+      : [qualityOption(item)];
+  const orderedQualityOptions = (items) =>
+    [
+      ...new Map(
+        items.filter((item) => item.url).map((item) => [item.url, item]),
+      ).values(),
+    ].sort((left, right) => (right.height || 0) - (left.height || 0));
+  const mergeDetectedMedia = (nextMedia) => {
+    const selectedUrl = selectedMedia().url;
+    let mergedVariants = orderedQualityOptions([
+      ...variants,
+      ...toQualityOptions(nextMedia),
+    ]);
+    if (currentPreferences.maxHeight) {
+      const limited = mergedVariants.filter(
+        (variant) =>
+          !variant.height ||
+          variant.height <= Number(currentPreferences.maxHeight),
+      );
+      if (limited.length) mergedVariants = limited;
+    }
+    cardMedia = {
+      ...cardMedia,
+      variants: mergedVariants,
+      size: Math.max(cardMedia.size || 0, nextMedia.size || 0),
+    };
+    capturedMedia.set(card.dataset.mediaUrl, cardMedia);
+    capturedMedia.set(nextMedia.url, cardMedia);
+    setVariants(mergedVariants, selectedUrl);
+  };
+  card.mergeDetectedMedia = mergeDetectedMedia;
+  setVariants(variants, media.url);
   qualitySelect.addEventListener("change", updateVariantDetails);
   card.classList.toggle("is-audio", isAudio);
   if (media.thumbnail) {
@@ -953,6 +1020,7 @@ clearButton.addEventListener("click", async () => {
   audioCount = 0;
   totalKnownSize = 0;
   capturedMedia.clear();
+  capturedInstagramPosts.clear();
   downloadViews.clear();
   await window.mediaScout.clearMedia();
   updateCount();
@@ -973,8 +1041,19 @@ forceRefreshButton.addEventListener("click", async () => {
 });
 
 window.mediaScout.onDetected((media) => {
+  const postKey = instagramPostKey(media);
+  const existingCard = postKey && capturedInstagramPosts.get(postKey);
+  if (existingCard) {
+    existingCard.mergeDetectedMedia(media);
+    return;
+  }
   capturedMedia.set(media.url, media);
-  resultsList.prepend(createMediaCard(media));
+  const card = createMediaCard(media);
+  resultsList.prepend(card);
+  if (postKey) {
+    card.dataset.instagramPostKey = postKey;
+    capturedInstagramPosts.set(postKey, card);
+  }
   count += 1;
   if (media.mime.startsWith("audio/")) audioCount += 1;
   else videoCount += 1;
@@ -1013,6 +1092,15 @@ dismissSelectedMediaButton.addEventListener("click", () => {
     const card = checkbox.closest(".media-card");
     const media = capturedMedia.get(card.dataset.mediaUrl);
     capturedMedia.delete(card.dataset.mediaUrl);
+    for (const variant of media?.variants || []) {
+      capturedMedia.delete(variant.url);
+    }
+    if (
+      card.dataset.instagramPostKey &&
+      capturedInstagramPosts.get(card.dataset.instagramPostKey) === card
+    ) {
+      capturedInstagramPosts.delete(card.dataset.instagramPostKey);
+    }
     count -= 1;
     if (media?.mime.startsWith("audio/")) audioCount -= 1;
     else videoCount -= 1;
