@@ -1402,6 +1402,7 @@ ipcMain.handle("navigation:validate", (_event, rawUrl) => {
 });
 
 ipcMain.handle("app:get-config", () => ({
+  appVersion: app.getVersion(),
   extensionPath: extensionDirectory(),
   startUrl: process.env.MEDIA_SCOUT_START_URL || DEFAULT_START_URL,
   downloadDirectory,

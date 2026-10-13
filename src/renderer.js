@@ -620,6 +620,10 @@ function createMediaCard(media) {
 
 async function loadInitialPage() {
   const config = await window.mediaScout.getConfig();
+  document.querySelector("#headerVersion").textContent =
+    `v${config.appVersion}`;
+  document.querySelector("#appVersion").textContent =
+    `Version ${config.appVersion}`;
   extensionPath.textContent = config.extensionPath;
   guideExtensionPath.textContent = config.extensionPath;
   guideExtensionPath.title = config.extensionPath;

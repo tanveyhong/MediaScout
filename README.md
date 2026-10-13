@@ -95,6 +95,12 @@ Pushing a version tag matching `package.json` (for example `v0.3.0`) runs verifi
 builds the NSIS installer, generates update metadata and SHA-256 checksums, creates GitHub
 build provenance attestations, and publishes a GitHub Release.
 
+Packaged Windows installs check GitHub Releases at startup and can download and install
+updates in place from Diagnostics. Publish each release by bumping `package.json`'s version,
+committing the change, and pushing the matching `v<version>` tag. `electron-updater` uses the
+release metadata and blockmaps for differential downloads when possible; users do not need
+to uninstall and reinstall the app manually.
+
 For Authenticode signing, configure these GitHub Actions secrets:
 
 - `WINDOWS_CERTIFICATE`: base64-encoded `.pfx` certificate or a supported certificate URL.
